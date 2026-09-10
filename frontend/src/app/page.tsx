@@ -132,6 +132,12 @@ export default function DashboardPage() {
               >
                 📦 Items & Catalog
               </Link>
+              <Link
+                href="/parties"
+                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
+              >
+                👥 Parties Directory
+              </Link>
             </nav>
           )}
 
