@@ -6,6 +6,7 @@ import { HealthModule } from './health/health.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { CompaniesModule } from './companies/companies.module';
+import { ItemsModule } from './items/items.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { CompaniesModule } from './companies/companies.module';
     SupabaseModule,
     AuthModule,
     CompaniesModule,
+    ItemsModule,
     HealthModule,
   ],
   controllers: [AppController],

@@ -117,6 +117,24 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* Nav Tabs */}
+          {user && (
+            <nav className="hidden md:flex items-center gap-1 bg-slate-900/60 p-1 rounded-xl border border-slate-800 text-xs">
+              <Link
+                href="/"
+                className="px-3 py-1.5 rounded-lg bg-cyan-950/80 text-cyan-300 font-medium border border-cyan-800/60"
+              >
+                Dashboard
+              </Link>
+              <Link
+                href="/inventory"
+                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
+              >
+                📦 Items & Catalog
+              </Link>
+            </nav>
+          )}
+
           {/* User & Company Context Nav Actions */}
           <div className="flex items-center gap-3">
             {user ? (
@@ -269,6 +287,12 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-center gap-3">
             {user ? (
               <>
+                <Link
+                  href="/inventory"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-semibold shadow-lg shadow-cyan-500/20 transition-all"
+                >
+                  <span>📦 Open Medicine Catalog</span>
+                </Link>
                 <Link
                   href="/select-company"
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-all border border-slate-700"
