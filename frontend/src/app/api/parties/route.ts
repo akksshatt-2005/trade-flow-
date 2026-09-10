@@ -88,7 +88,7 @@ export async function POST(request: Request) {
 
     const { companyId } = auth;
     const body = await request.json();
-    const { name, type, phone, address, gst_number } = body;
+    const { name, type, phone, address, gst_number, state } = body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json({ message: "Party name is required." }, { status: 400 });
@@ -111,6 +111,16 @@ export async function POST(request: Request) {
       }
     }
 
+    let finalAddress = address?.trim() || null;
+    if (state && typeof state === "string" && state.trim()) {
+      const stateTrimmed = state.trim();
+      if (!finalAddress) {
+        finalAddress = stateTrimmed;
+      } else if (!finalAddress.toLowerCase().includes(stateTrimmed.toLowerCase())) {
+        finalAddress = `${finalAddress}, ${stateTrimmed}`;
+      }
+    }
+
     const { data: party, error } = await supabaseAdmin
       .from("parties")
       .insert({
@@ -118,7 +128,7 @@ export async function POST(request: Request) {
         name: name.trim(),
         type,
         phone: phone?.trim() || null,
-        address: address?.trim() || null,
+        address: finalAddress,
         gst_number: gst_number?.trim() || null,
       })
       .select()

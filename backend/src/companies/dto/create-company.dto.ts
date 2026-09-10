@@ -14,4 +14,9 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
 }
+

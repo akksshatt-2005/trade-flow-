@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
     const userId = authData.user.id;
     const body = await request.json();
-    const { name, gst_number, address } = body;
+    const { name, gst_number, address, state } = body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json(
@@ -37,6 +37,7 @@ export async function POST(request: Request) {
         name: name.trim(),
         gst_number: gst_number?.trim() || null,
         address: address?.trim() || null,
+        state: state?.trim() || null,
       })
       .select()
       .single();
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
           name: company.name,
           gst_number: company.gst_number,
           address: company.address,
+          state: company.state,
           role: "owner",
           created_at: company.created_at,
         },

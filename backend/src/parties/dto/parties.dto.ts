@@ -31,6 +31,10 @@ export class CreatePartyDto {
   @IsOptional()
   @IsString()
   gst_number?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
 }
 
 export class UpdatePartyDto {
@@ -58,4 +62,9 @@ export class UpdatePartyDto {
   @IsOptional()
   @IsString()
   gst_number?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
 }
+

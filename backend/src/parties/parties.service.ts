@@ -6,6 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { resolveState } from '../companies/companies.service';
 import { CreatePartyDto, UpdatePartyDto } from './dto/parties.dto';
 
 export interface Party {
@@ -15,6 +16,7 @@ export interface Party {
   type: 'customer' | 'vendor' | 'both';
   phone?: string | null;
   address?: string | null;
+  state?: string | null;
   gst_number?: string | null;
   created_at: string;
   updated_at: string;
@@ -41,6 +43,16 @@ export class PartiesService {
   async create(companyId: string, dto: CreatePartyDto): Promise<Party> {
     const admin = this.supabaseService.getAdminClient();
 
+    let finalAddress = dto.address?.trim() || null;
+    if (dto.state && dto.state.trim()) {
+      const stateTrimmed = dto.state.trim();
+      if (!finalAddress) {
+        finalAddress = stateTrimmed;
+      } else if (!finalAddress.toLowerCase().includes(stateTrimmed.toLowerCase())) {
+        finalAddress = `${finalAddress}, ${stateTrimmed}`;
+      }
+    }
+
     const { data: party, error } = await admin
       .from('parties')
       .insert({
@@ -48,7 +60,7 @@ export class PartiesService {
         name: dto.name.trim(),
         type: dto.type,
         phone: dto.phone?.trim() || null,
-        address: dto.address?.trim() || null,
+        address: finalAddress,
         gst_number: dto.gst_number?.trim() || null,
       })
       .select()
@@ -61,7 +73,10 @@ export class PartiesService {
       );
     }
 
-    return party;
+    return {
+      ...party,
+      state: dto.state || resolveState(party),
+    };
   }
 
   /**
@@ -94,7 +109,10 @@ export class PartiesService {
       throw new InternalServerErrorException('Failed to fetch parties list.');
     }
 
-    return parties || [];
+    return (parties || []).map((p) => ({
+      ...p,
+      state: resolveState(p),
+    }));
   }
 
   /**
@@ -114,7 +132,10 @@ export class PartiesService {
       throw new NotFoundException(`Party '${partyId}' not found in this company.`);
     }
 
-    return party;
+    return {
+      ...party,
+      state: resolveState(party),
+    };
   }
 
   /**
