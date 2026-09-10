@@ -13,9 +13,10 @@
     "dev:backend": "npm --prefix backend run start:dev",
     "build:frontend": "npm --prefix frontend run build",
     "build:backend": "npm --prefix backend run build",
-    "build": "npm run build:backend && npm run build:frontend",
+    "build": "npm --prefix frontend run build",
     "start:backend": "npm --prefix backend run start:prod",
     "start:frontend": "npm --prefix frontend run start",
+    "start": "npm --prefix frontend run start",
     "install:all": "npm install --prefix backend && npm install --prefix frontend"
   },
   "keywords": [
