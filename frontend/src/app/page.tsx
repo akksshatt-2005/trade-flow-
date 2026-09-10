@@ -7,6 +7,8 @@ interface HealthResponse {
   service?: string;
   timestamp?: string;
   uptime?: string;
+  message?: string;
+  targetUrl?: string;
   [key: string]: unknown;
 }
 
@@ -16,9 +18,19 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [latency, setLatency] = useState<number | null>(null);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [isCloudDeployment, setIsCloudDeployment] = useState<boolean>(false);
 
   const backendUrl =
     process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsCloudDeployment(
+        window.location.hostname !== "localhost" &&
+          window.location.hostname !== "127.0.0.1"
+      );
+    }
+  }, []);
 
   const fetchHealth = useCallback(async () => {
     setLoading(true);
@@ -26,17 +38,23 @@ export default function Home() {
     const start = performance.now();
 
     try {
-      const res = await fetch(`${backendUrl}/health`, {
-        cache: "no-store",
-      });
+      // First try Next.js proxy route, then direct backend
+      let res = await fetch(`/api/health`, { cache: "no-store" });
+      if (!res.ok) {
+        // Fallback to direct backend call
+        res = await fetch(`${backendUrl}/health`, { cache: "no-store" });
+      }
+
       const end = performance.now();
       setLatency(Math.round(end - start));
 
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status} ${res.statusText}`);
+      const json = await res.json();
+      if (!res.ok || json.status === "offline" || json.status === "error") {
+        throw new Error(
+          json.message || `HTTP error! status: ${res.status} ${res.statusText}`
+        );
       }
 
-      const json = await res.json();
       setData(json);
       setLastChecked(new Date());
     } catch (err: unknown) {
@@ -54,6 +72,7 @@ export default function Home() {
   }, [fetchHealth]);
 
   const isConnected = !loading && !error && data?.status === "ok";
+  const isCloudWithLocalhost = isCloudDeployment && backendUrl.includes("localhost");
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-cyan-500 selection:text-white">
@@ -108,6 +127,24 @@ export default function Home() {
 
       {/* Main Content Area */}
       <div className="max-w-6xl mx-auto px-6 py-12 w-full flex-1 flex flex-col justify-center">
+        {/* Cloud Warning Alert if on Vercel with localhost URL */}
+        {isCloudWithLocalhost && (
+          <div className="mb-8 p-4 rounded-xl bg-amber-950/50 border border-amber-800/60 text-amber-200 text-sm flex items-start gap-3 shadow-lg">
+            <span className="text-xl">⚠️</span>
+            <div>
+              <p className="font-semibold text-amber-100">
+                You are viewing this site live on Vercel Cloud!
+              </p>
+              <p className="text-xs text-amber-300/90 mt-1 leading-relaxed">
+                Vercel cannot connect to <code className="bg-amber-900/60 px-1 py-0.5 rounded text-white">http://localhost:4000</code> because your NestJS backend is only running on your local computer.
+              </p>
+              <p className="text-xs text-amber-300/90 mt-1">
+                👉 <strong>To fix for Vercel:</strong> Deploy your backend to <strong>Render</strong>, then set <code className="bg-amber-900/60 px-1 py-0.5 rounded text-white">NEXT_PUBLIC_BACKEND_URL=https://your-backend.onrender.com</code> in Vercel Project Settings.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Hero Section */}
         <div className="text-center max-w-2xl mx-auto mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300 mb-4">
@@ -118,7 +155,7 @@ export default function Home() {
             Trade Flow Full-Stack Core
           </h1>
           <p className="text-slate-400 text-base leading-relaxed">
-            Next.js App Router communicating directly with NestJS backend, structured for rapid Supabase integration and cloud deployment.
+            Next.js App Router communicating with NestJS backend, structured for Supabase integration and cloud deployment.
           </p>
         </div>
 
@@ -206,7 +243,15 @@ export default function Home() {
                 </div>
                 <p className="text-xs text-rose-300/80">{error}</p>
                 <div className="mt-2 text-xs text-slate-400">
-                  <span className="text-slate-300 font-semibold">Troubleshooting:</span> Ensure the NestJS backend is running via <code className="bg-slate-900 px-1 py-0.5 rounded text-cyan-300">npm run dev:backend</code> or <code className="bg-slate-900 px-1 py-0.5 rounded text-cyan-300">cd backend && npm run start:dev</code> on port 4000.
+                  {isCloudWithLocalhost ? (
+                    <div>
+                      <span className="text-amber-300 font-semibold">Cloud Notice:</span> You are accessing this page on Vercel. Deploy your backend to Render and set <code className="bg-slate-900 px-1 py-0.5 rounded text-cyan-300">NEXT_PUBLIC_BACKEND_URL</code> in Vercel.
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="text-slate-300 font-semibold">Local Troubleshooting:</span> Make sure backend is running locally on port 4000 (<code className="bg-slate-900 px-1 py-0.5 rounded text-cyan-300">cd backend && npm run start:dev</code>).
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -231,7 +276,7 @@ export default function Home() {
               <span className="ml-auto text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">Next.js 15</span>
             </div>
             <p className="text-xs text-slate-400 mb-3">
-              React + TypeScript with App Router, tailored for continuous deployment on Vercel.
+              React + TypeScript with App Router, deployed on Vercel.
             </p>
             <div className="text-[11px] font-mono text-slate-400 bg-slate-950 p-2 rounded border border-slate-800/80">
               Path: <span className="text-cyan-400">/frontend</span>
@@ -248,7 +293,7 @@ export default function Home() {
               <span className="ml-auto text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">NestJS 10</span>
             </div>
             <p className="text-xs text-slate-400 mb-3">
-              Enterprise TypeScript API framework with CORS and modular health check, configured for Render.
+              TypeScript API framework with CORS and modular health check, deployable on Render.
             </p>
             <div className="text-[11px] font-mono text-slate-400 bg-slate-950 p-2 rounded border border-slate-800/80">
               Path: <span className="text-cyan-400">/backend</span>
@@ -265,10 +310,10 @@ export default function Home() {
               <span className="ml-auto text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">Postgres</span>
             </div>
             <p className="text-xs text-slate-400 mb-3">
-              Environment variables ready for Postgres DB, Auth, and Storage. No secrets in source code.
+              Connected to project <code className="text-emerald-400 font-mono">swgtmvsscaervhahzfjh</code>.
             </p>
-            <div className="text-[11px] font-mono text-slate-400 bg-slate-950 p-2 rounded border border-slate-800/80">
-              Templates: <span className="text-cyan-400">.env.example</span>
+            <div className="text-[11px] font-mono text-slate-400 bg-slate-950 p-2 rounded border border-slate-800/80 truncate">
+              URL: <span className="text-cyan-400">swgtmvsscaervhahzfjh.supabase.co</span>
             </div>
           </div>
         </div>
