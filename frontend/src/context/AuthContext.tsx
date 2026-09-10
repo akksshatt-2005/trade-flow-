@@ -8,7 +8,7 @@ import React, {
   useCallback,
   ReactNode,
 } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 export interface User {
   id: string;
@@ -30,11 +30,21 @@ interface AuthContextType {
   companies: Company[];
   activeCompany: Company | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<{ success: boolean; error?: string; companiesCount?: number }>;
-  signup: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (
+    username: string,
+    password: string,
+  ) => Promise<{ success: boolean; error?: string; companiesCount?: number }>;
+  signup: (
+    username: string,
+    password: string,
+  ) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   selectCompany: (company: Company) => void;
-  createCompany: (name: string, gst_number?: string, address?: string) => Promise<{ success: boolean; company?: Company; error?: string }>;
+  createCompany: (
+    name: string,
+    gst_number?: string,
+    address?: string,
+  ) => Promise<{ success: boolean; company?: Company; error?: string }>;
   refreshCompanies: () => Promise<Company[]>;
   apiFetch: (endpoint: string, options?: RequestInit) => Promise<Response>;
 }
@@ -45,24 +55,6 @@ const TOKEN_KEY = "tradeflow_auth_token";
 const USER_KEY = "tradeflow_auth_user";
 const COMPANY_KEY = "tradeflow_active_company";
 
-const getBackendUrl = (): string => {
-  if (typeof window === "undefined") {
-    return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
-  }
-  const isLocalhost =
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1";
-  if (isLocalhost) {
-    return "http://localhost:4000";
-  }
-  return (
-    process.env.NEXT_PUBLIC_BACKEND_URL ||
-    (window.location.origin.includes("trade-flow")
-      ? "https://trade-flow-backend.onrender.com"
-      : "http://localhost:4000")
-  );
-};
-
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -71,13 +63,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   const router = useRouter();
-  const pathname = usePathname();
 
-  // Helper API Fetch with automated Auth and Tenant Header Injection
+  // Unified API fetch routing through /api or backend
   const apiFetch = useCallback(
     async (endpoint: string, options: RequestInit = {}): Promise<Response> => {
-      const baseUrl = getBackendUrl();
-      const url = endpoint.startsWith("http") ? endpoint : `${baseUrl}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+      // Normalize endpoint to start with /api if relative
+      let normalized = endpoint;
+      if (!endpoint.startsWith("http")) {
+        if (!endpoint.startsWith("/api/")) {
+          normalized = `/api${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+        }
+      }
 
       const headers = new Headers(options.headers || {});
       if (token && !headers.has("Authorization")) {
@@ -90,7 +86,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         headers.set("Content-Type", "application/json");
       }
 
-      return fetch(url, {
+      return fetch(normalized, {
         ...options,
         headers,
       });
@@ -101,8 +97,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const fetchUserCompanies = useCallback(
     async (authToken: string): Promise<Company[]> => {
       try {
-        const baseUrl = getBackendUrl();
-        const res = await fetch(`${baseUrl}/companies/mine`, {
+        const res = await fetch("/api/companies/mine", {
           headers: {
             Authorization: `Bearer ${authToken}`,
             "Content-Type": "application/json",
@@ -124,7 +119,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     [],
   );
 
-  // Initialize Session from LocalStorage
+  // Restore Session on Mount
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -141,7 +136,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
           if (savedCompany) {
             const parsedCompany: Company = JSON.parse(savedCompany);
-            // Verify user still has access to saved company
             const exists = list.find((c) => c.id === parsedCompany.id);
             if (exists) {
               setActiveCompany(exists);
@@ -157,7 +151,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           }
         }
       } catch (err) {
-        console.error("Failed to restore auth state", err);
+        console.error("Failed to restore session", err);
       } finally {
         setLoading(false);
       }
@@ -181,8 +175,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     password: string,
   ): Promise<{ success: boolean; error?: string; companiesCount?: number }> => {
     try {
-      const baseUrl = getBackendUrl();
-      const res = await fetch(`${baseUrl}/auth/login`, {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -202,7 +195,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       localStorage.setItem(TOKEN_KEY, data.access_token);
       localStorage.setItem(USER_KEY, JSON.stringify(data.user));
 
-      // Fetch user companies
       const list = await fetchUserCompanies(data.access_token);
 
       if (list.length === 1) {
@@ -216,7 +208,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch {
       return {
         success: false,
-        error: "Unable to connect to authentication server. Please check your backend connection.",
+        error: "Unable to connect to login service. Please check your internet connection.",
       };
     }
   };
@@ -226,8 +218,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     password: string,
   ): Promise<{ success: boolean; error?: string }> => {
     try {
-      const baseUrl = getBackendUrl();
-      const res = await fetch(`${baseUrl}/auth/signup`, {
+      const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -255,7 +246,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch {
       return {
         success: false,
-        error: "Unable to connect to registration server. Please check your backend connection.",
+        error: "Unable to connect to registration service. Please check your internet connection.",
       };
     }
   };
@@ -266,12 +257,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     address?: string,
   ): Promise<{ success: boolean; company?: Company; error?: string }> => {
     if (!token) {
-      return { success: false, error: "You must be logged in to create a company." };
+      return { success: false, error: "You must be signed in to create a company." };
     }
 
     try {
-      const baseUrl = getBackendUrl();
-      const res = await fetch(`${baseUrl}/companies`, {
+      const res = await fetch("/api/companies", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
