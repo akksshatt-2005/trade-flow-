@@ -1,0 +1,30 @@
+{
+  "name": "trade-flow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trade Flow full-stack monorepo with Next.js frontend, NestJS backend, and Supabase database",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "npm run dev:backend & npm run dev:frontend",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "npm --prefix backend run start:dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:backend": "npm --prefix backend run build",
+    "build": "npm run build:backend && npm run build:frontend",
+    "start:backend": "npm --prefix backend run start:prod",
+    "start:frontend": "npm --prefix frontend run start",
+    "install:all": "npm install --prefix backend && npm install --prefix frontend"
+  },
+  "keywords": [
+    "trade-flow",
+    "nextjs",
+    "nestjs",
+    "supabase",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT"
+}

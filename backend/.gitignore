@@ -1,0 +1,29 @@
+# Compiled output
+/dist
+/node_modules
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log
+
+# OS & Editor
+.DS_Store
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tests & Coverage
+/coverage
+/.nyc_output
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
