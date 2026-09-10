@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const backendUrl =
     process.env.NEXT_PUBLIC_BACKEND_URL ||
@@ -19,7 +21,7 @@ export async function GET() {
           message: `Backend returned HTTP ${res.status}: ${res.statusText}`,
           targetUrl: `${backendUrl}/health`,
         },
-        { status: res.status },
+        { status: res.status }
       );
     }
 
@@ -37,7 +39,7 @@ export async function GET() {
           backendUrl.includes("localhost") &&
           process.env.VERCEL === "1",
       },
-      { status: 503 },
+      { status: 503 }
     );
   }
 }
