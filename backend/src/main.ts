@@ -1,16 +1,30 @@
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS for any frontend origin in dev / production
+  // Global Input Validation & Transformation
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
+    }),
+  );
+
+  // Enable CORS for frontend clients
   app.enableCors({
     origin: (origin, callback) => {
-      // Allow all origins (localhost, 127.0.0.1, Vercel preview/production domains, mobile)
+      // Allow all origins (localhost, Vercel cloud domains, Render)
       callback(null, true);
     },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type,Accept,Authorization,x-company-id,company-id',
     credentials: true,
   });
 
