@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Trade Flow | Multi-Tenant Medicine & Inventory Management",
-  description: "Next.js + NestJS + Supabase multi-tenant platform for medicine shops and inventory",
+  title: "Trade Flow | Pharmacy & Inventory Billing ERP",
+  description: "High-density multi-tenant billing, inventory, and GST compliance software for pharmacies and trade businesses",
 };
 
 export default function RootLayout({
@@ -26,11 +26,12 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans bg-slate-950 text-slate-100">
+      <body className="min-h-full flex flex-col font-sans bg-slate-50 text-slate-900">
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
 }
+

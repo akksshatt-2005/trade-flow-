@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { useAuth, Company } from "../../context/AuthContext";
 
 export default function SelectCompanyPage() {
-  const { user, companies, activeCompany, selectCompany, createCompany, refreshCompanies, loading, logout } = useAuth();
+  const { user, companies, activeCompany, selectCompany, createCompany, loading, logout } = useAuth();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [name, setName] = useState("");
   const [gstNumber, setGstNumber] = useState("");
   const [address, setAddress] = useState("");
+  const [state, setState] = useState("Maharashtra");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -37,12 +38,14 @@ export default function SelectCompanyPage() {
     setSubmitting(true);
 
     try {
-      const res = await createCompany(name.trim(), gstNumber.trim(), address.trim());
+      const fullAddress = address.trim() ? `${address.trim()}, ${state.trim()}` : state.trim();
+      const res = await createCompany(name.trim(), gstNumber.trim(), fullAddress);
       if (res.success && res.company) {
         setName("");
         setGstNumber("");
         setAddress("");
         setShowCreateModal(false);
+        selectCompany(res.company);
         router.push("/");
       } else {
         setError(res.error || "Failed to create company.");
@@ -56,243 +59,190 @@ export default function SelectCompanyPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-cyan-400">
-        <div className="flex items-center gap-3">
-          <span className="h-6 w-6 border-2 border-cyan-400/20 border-t-cyan-400 rounded-full animate-spin" />
-          <span className="text-sm font-medium">Loading workspace...</span>
-        </div>
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center text-xs text-slate-500">
+        Loading shops...
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-cyan-500 selection:text-white relative overflow-hidden">
-      {/* Background Ambience */}
-      <div className="absolute top-1/4 right-1/4 w-[600px] h-[600px] bg-cyan-600/5 rounded-full blur-3xl pointer-events-none" />
+    <div className="min-h-screen bg-slate-100 flex flex-col justify-center items-center px-4 py-12">
+      <div className="w-full max-w-lg">
+        {/* Brand Header */}
+        <div className="text-center mb-6">
+          <div className="inline-flex h-12 w-12 rounded-lg bg-blue-600 items-center justify-center font-bold text-white text-xl shadow-md mb-3">
+            TF
+          </div>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">
+            Select Active Business
+          </h1>
+          <p className="text-slate-500 text-xs mt-1">
+            Choose the pharmacy store or business branch to manage
+          </p>
+        </div>
 
-      {/* Header */}
-      <header className="border-b border-slate-800/80 backdrop-blur-md bg-slate-950/60 sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
-              TF
-            </div>
-            <div>
-              <span className="font-bold text-sm text-white">Trade Flow</span>
-              <p className="text-[11px] text-slate-400">Multi-Tenant Company Selector</p>
-            </div>
+        {/* Company List Card */}
+        <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+              Your Registered Shops ({companies.length})
+            </span>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+            >
+              + Register New Shop
+            </button>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300">
-              <span className="h-2 w-2 rounded-full bg-cyan-400"></span>
-              <span>@{user?.username}</span>
+          {companies.length === 0 ? (
+            <div className="py-8 text-center text-xs text-slate-500">
+              You do not have any shops registered yet.
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(true)}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow-sm"
+                >
+                  Register Your First Shop
+                </button>
+              </div>
             </div>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {companies.map((comp) => (
+                <div
+                  key={comp.id}
+                  onClick={() => handleSelect(comp)}
+                  className="p-3 border border-slate-200 rounded-md hover:border-blue-500 hover:bg-blue-50/50 flex items-center justify-between transition-colors cursor-pointer group"
+                >
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-900">
+                      {comp.name}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2">
+                      <span>{comp.gst_number || "Unregistered GST"}</span>
+                      {comp.address && <span>&bull; {comp.address}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold uppercase">
+                      {comp.role}
+                    </span>
+                    <span className="text-blue-600 font-bold text-sm">&rarr;</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Signed in as <strong>{user?.username}</strong></span>
             <button
               onClick={logout}
-              className="text-xs text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+              className="text-red-600 hover:underline font-semibold cursor-pointer"
             >
               Sign Out
             </button>
           </div>
         </div>
-      </header>
+      </div>
 
-      {/* Main Content */}
-      <main className="max-w-5xl mx-auto px-6 py-12 w-full flex-1 flex flex-col justify-center">
-        <div className="max-w-2xl mx-auto text-center mb-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/50 border border-cyan-800/60 text-xs text-cyan-300 mb-3">
-            <span>🏢</span>
-            <span>Tenant Workspace Selection</span>
-          </div>
-          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-            Select or Create a Company
-          </h1>
-          <p className="text-slate-400 text-sm mt-2">
-            Each company maintains strictly isolated inventory, parties, and invoices.
-          </p>
-        </div>
-
-        {/* Company Grid or Empty State */}
-        {companies.length > 0 ? (
-          <div className="grid sm:grid-cols-2 gap-4 max-w-3xl mx-auto w-full mb-8">
-            {companies.map((comp) => {
-              const isSelected = activeCompany?.id === comp.id;
-              return (
-                <div
-                  key={comp.id}
-                  onClick={() => handleSelect(comp)}
-                  className={`group p-6 rounded-2xl border transition-all cursor-pointer relative overflow-hidden backdrop-blur-sm ${
-                    isSelected
-                      ? "bg-slate-900 border-cyan-500 shadow-xl shadow-cyan-500/10 ring-1 ring-cyan-500/50"
-                      : "bg-slate-900/70 border-slate-800 hover:border-slate-700 hover:bg-slate-900/90"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="h-10 w-10 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-lg font-bold text-cyan-400 group-hover:scale-105 transition-transform">
-                      {comp.name.substring(0, 2).toUpperCase()}
-                    </div>
-                    <span
-                      className={`text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full border font-semibold ${
-                        comp.role === "owner"
-                          ? "bg-amber-950/60 border-amber-800/80 text-amber-300"
-                          : comp.role === "accountant"
-                          ? "bg-cyan-950/60 border-cyan-800/80 text-cyan-300"
-                          : "bg-slate-800 border-slate-700 text-slate-300"
-                      }`}
-                    >
-                      {comp.role}
-                    </span>
-                  </div>
-
-                  <h3 className="text-lg font-semibold text-white group-hover:text-cyan-300 transition-colors">
-                    {comp.name}
-                  </h3>
-
-                  {comp.gst_number && (
-                    <p className="text-xs text-slate-400 font-mono mt-1">
-                      GSTIN: <span className="text-slate-300">{comp.gst_number}</span>
-                    </p>
-                  )}
-
-                  {comp.address && (
-                    <p className="text-xs text-slate-500 mt-1 line-clamp-1">
-                      📍 {comp.address}
-                    </p>
-                  )}
-
-                  <div className="mt-5 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                    <span className="text-slate-500">Tenant ID: {comp.id.substring(0, 8)}...</span>
-                    <span className="text-cyan-400 group-hover:translate-x-1 transition-transform flex items-center gap-1 font-medium">
-                      Enter Company &rarr;
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="max-w-md mx-auto w-full bg-slate-900/70 border border-slate-800 rounded-2xl p-8 text-center mb-8">
-            <div className="h-14 w-14 rounded-2xl bg-cyan-950/80 border border-cyan-800/60 flex items-center justify-center text-2xl mx-auto mb-4">
-              🏪
+      {/* Register New Shop Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <h3 className="text-sm font-bold text-slate-900">
+                Register New Shop / Business
+              </h3>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
-            <h2 className="text-lg font-semibold text-white">No Companies Found</h2>
-            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              You do not have any pharmacy or business companies registered yet. Create your first company to get started.
-            </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition-all shadow-lg shadow-cyan-600/20 cursor-pointer"
-            >
-              <span>+ Create First Company</span>
-            </button>
-          </div>
-        )}
-
-        {/* Action to create new company if already has companies */}
-        {companies.length > 0 && (
-          <div className="text-center">
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-medium transition-all shadow-md cursor-pointer"
-            >
-              <span>+ Add Another Company / Store</span>
-            </button>
-          </div>
-        )}
-
-        {/* Modal for Creating New Company */}
-        {showCreateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-lg w-full shadow-2xl relative">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h3 className="text-lg font-bold text-white">Create New Company</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    You will automatically be assigned as Owner
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowCreateModal(false)}
-                  className="text-slate-400 hover:text-white text-sm p-1 rounded-lg hover:bg-slate-800 transition-colors"
-                >
-                  ✕
-                </button>
-              </div>
-
+            <form onSubmit={handleCreateCompany} className="p-5 space-y-4">
               {error && (
-                <div className="mb-5 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs">
+                <div className="p-2.5 rounded bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
                   {error}
                 </div>
               )}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Shop / Business Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Apex Medical & General Store"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 font-semibold"
+                />
+              </div>
 
-              <form onSubmit={handleCreateCompany} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Company / Pharmacy Name *
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GSTIN Number (Optional)
                   </label>
                   <input
                     type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Apex Health & Pharmacy Ltd"
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    GST Number (Optional)
-                  </label>
-                  <input
-                    type="text"
+                    placeholder="e.g. 27AABCS1234F1Z1"
                     value={gstNumber}
                     onChange={(e) => setGstNumber(e.target.value)}
-                    placeholder="e.g. 27AAAAA0000A1Z5"
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50 font-mono uppercase"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono uppercase focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
                   />
                 </div>
-
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Store Address (Optional)
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Operating State
                   </label>
-                  <textarea
-                    rows={2}
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="e.g. Shop 14, Main Medical Complex, MG Road"
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  <input
+                    type="text"
+                    placeholder="e.g. Maharashtra"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
                   />
                 </div>
+              </div>
 
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800 mt-6">
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateModal(false)}
-                    className="px-4 py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-xs font-medium transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting || !name.trim()}
-                    className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 disabled:opacity-50 text-white text-xs font-semibold transition-all shadow-lg shadow-cyan-600/20"
-                  >
-                    {submitting ? "Creating..." : "Create & Enter Store"}
-                  </button>
-                </div>
-              </form>
-            </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Address (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Store location, street, area, city"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-3 py-1.5 border border-slate-300 rounded text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                >
+                  {submitting ? "Creating..." : "Save Shop"}
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-600">
-        Trade Flow Multi-Tenant Architecture &bull; Option A (Supabase Auth)
-      </footer>
+        </div>
+      )}
     </div>
   );
 }

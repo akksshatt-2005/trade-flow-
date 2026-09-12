@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import Link from "next/link";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth, Company } from "../../context/AuthContext";
+import { useAuth } from "../../context/AuthContext";
+import AppLayout from "../../components/AppLayout";
 
 export interface Party {
   id: string;
@@ -12,11 +12,12 @@ export interface Party {
   type: "customer" | "vendor" | "both";
   phone?: string | null;
   address?: string | null;
+  state?: string | null;
   gst_number?: string | null;
   created_at: string;
 }
 
-export interface PartySummary {
+export interface PartySummaryData {
   party: Party;
   sales_invoices_count: number;
   purchase_invoices_count: number;
@@ -26,1019 +27,608 @@ export interface PartySummary {
 }
 
 export default function PartiesPage() {
-  const {
-    user,
-    companies,
-    activeCompany,
-    selectCompany,
-    loading: authLoading,
-    logout,
-    apiFetch,
-  } = useAuth();
+  const { user, token, activeCompany, loading: authLoading, apiFetch } = useAuth();
+  const router = useRouter();
 
   const [parties, setParties] = useState<Party[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [activeTab, setActiveTab] = useState<"all" | "customer" | "vendor" | "both">("all");
+  const [filterType, setFilterType] = useState<"all" | "customer" | "vendor">("all");
 
   // Modals state
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showDetailModal, setShowDetailModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showSummaryDrawer, setShowSummaryDrawer] = useState(false);
 
-  // Selected party for detail / edit
+  // Selected party for edit / summary
   const [selectedParty, setSelectedParty] = useState<Party | null>(null);
-  const [partySummary, setPartySummary] = useState<PartySummary | null>(null);
+  const [summaryData, setSummaryData] = useState<PartySummaryData | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
-  // Add party form state
-  const [name, setName] = useState("");
-  const [type, setType] = useState<"customer" | "vendor" | "both">("customer");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
-  const [gstNumber, setGstNumber] = useState("");
-  const [formSubmitting, setFormSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  // Form states - Add Party
+  const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState<"customer" | "vendor" | "both">("customer");
+  const [newPhone, setNewPhone] = useState("");
+  const [newAddress, setNewAddress] = useState("");
+  const [newState, setNewState] = useState("Maharashtra");
+  const [newGst, setNewGst] = useState("");
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
-  // Edit party form state
+  // Form states - Edit Party
   const [editName, setEditName] = useState("");
   const [editType, setEditType] = useState<"customer" | "vendor" | "both">("customer");
   const [editPhone, setEditPhone] = useState("");
   const [editAddress, setEditAddress] = useState("");
-  const [editGstNumber, setEditGstNumber] = useState("");
-  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editState, setEditState] = useState("");
+  const [editGst, setEditGst] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // Header dropdown state
-  const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setCompanyDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Fetch Parties list for active company
-  const loadParties = useCallback(async () => {
-    if (!activeCompany) return;
+  // 1. Fetch Parties
+  const fetchParties = useCallback(async () => {
+    if (!token || !activeCompany?.id) return;
     setLoading(true);
     setError(null);
     try {
-      const queryParam = activeTab === "all" ? "" : `?type=${activeTab}`;
-      const res = await apiFetch(`/parties${queryParam}`);
-      const data = await res.json();
+      const res = await apiFetch("/parties");
       if (res.ok) {
+        const data = await res.json();
         setParties(data.parties || []);
       } else {
+        const data = await res.json().catch(() => ({}));
         setError(data.message || "Failed to load parties.");
       }
-    } catch {
-      setError("Network error loading parties.");
+    } catch (err: any) {
+      setError(err.message || "Failed to connect to backend server.");
     } finally {
       setLoading(false);
     }
-  }, [activeCompany, activeTab, apiFetch]);
+  }, [token, activeCompany?.id, apiFetch]);
 
   useEffect(() => {
     if (!authLoading && !user) {
       router.push("/login");
-    } else if (!authLoading && !activeCompany) {
-      router.push("/select-company");
-    } else if (activeCompany) {
-      loadParties();
-    }
-  }, [user, activeCompany, authLoading, router, loadParties]);
-
-  // Handle Add Party Submit
-  const handleAddParty = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      setFormError("Party name is required.");
       return;
     }
+    if (activeCompany?.id) {
+      fetchParties();
+    }
+  }, [authLoading, user, activeCompany?.id, fetchParties, router]);
 
-    setFormError(null);
-    setFormSubmitting(true);
-
+  // 2. Add Party
+  const handleAddParty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim()) {
+      setAddError("Party name is required.");
+      return;
+    }
+    setAddLoading(true);
+    setAddError(null);
     try {
-      const payload = {
-        name: name.trim(),
-        type,
-        phone: phone.trim() || undefined,
-        address: address.trim() || undefined,
-        gst_number: gstNumber.trim() || undefined,
-      };
-
       const res = await apiFetch("/parties", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          name: newName.trim(),
+          type: newType,
+          phone: newPhone.trim() || undefined,
+          address: newAddress.trim() || undefined,
+          state: newState.trim() || undefined,
+          gst_number: newGst.trim() || undefined,
+        }),
       });
-
       const data = await res.json();
-
       if (res.ok) {
-        setName("");
-        setType("customer");
-        setPhone("");
-        setAddress("");
-        setGstNumber("");
         setShowAddModal(false);
-        loadParties();
+        setNewName("");
+        setNewPhone("");
+        setNewAddress("");
+        setNewGst("");
+        fetchParties();
       } else {
-        const errorMsg = Array.isArray(data.message)
-          ? data.message.join(", ")
-          : data.message || "Failed to create party.";
-        setFormError(errorMsg);
+        setAddError(data.message || "Failed to add party.");
       }
-    } catch {
-      setFormError("Unexpected error creating party.");
+    } catch (err: any) {
+      setAddError(err.message || "Network error adding party.");
     } finally {
-      setFormSubmitting(false);
+      setAddLoading(false);
     }
   };
 
-  // Open Detail & Summary Modal
-  const openDetailModal = async (party: Party) => {
+  // 3. View Summary Drawer
+  const handleViewSummary = async (party: Party) => {
     setSelectedParty(party);
-    setShowDetailModal(true);
+    setShowSummaryDrawer(true);
     setSummaryLoading(true);
     try {
       const res = await apiFetch(`/parties/${party.id}/summary`);
-      const data = await res.json();
       if (res.ok) {
-        setPartySummary(data.summary);
-      } else {
-        setPartySummary(null);
+        const data = await res.json();
+        setSummaryData(data.summary);
       }
     } catch {
-      setPartySummary(null);
+      // Ignore
     } finally {
       setSummaryLoading(false);
     }
   };
 
-  // Open Edit Modal
-  const openEditModal = (party: Party) => {
+  // 4. Open Edit Modal
+  const handleOpenEdit = (party: Party) => {
     setSelectedParty(party);
     setEditName(party.name);
     setEditType(party.type);
     setEditPhone(party.phone || "");
     setEditAddress(party.address || "");
-    setEditGstNumber(party.gst_number || "");
-    setEditError(null);
+    setEditState(party.state || "");
+    setEditGst(party.gst_number || "");
     setShowEditModal(true);
   };
 
-  // Handle Edit Party Submit
   const handleEditParty = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedParty) return;
-
-    if (!editName.trim()) {
-      setEditError("Party name is required.");
-      return;
-    }
-
+    setEditLoading(true);
     setEditError(null);
-    setEditSubmitting(true);
-
     try {
-      const payload = {
-        name: editName.trim(),
-        type: editType,
-        phone: editPhone.trim() || undefined,
-        address: editAddress.trim() || undefined,
-        gst_number: editGstNumber.trim() || undefined,
-      };
-
       const res = await apiFetch(`/parties/${selectedParty.id}`, {
         method: "PATCH",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          name: editName.trim(),
+          type: editType,
+          phone: editPhone.trim() || undefined,
+          address: editAddress.trim() || undefined,
+          state: editState.trim() || undefined,
+          gst_number: editGst.trim() || undefined,
+        }),
       });
-
       const data = await res.json();
-
       if (res.ok) {
         setShowEditModal(false);
-        if (showDetailModal) {
-          openDetailModal(data.party);
-        }
-        loadParties();
+        setSelectedParty(null);
+        fetchParties();
       } else {
-        const errorMsg = Array.isArray(data.message)
-          ? data.message.join(", ")
-          : data.message || "Failed to update party.";
-        setEditError(errorMsg);
+        setEditError(data.message || "Failed to update party.");
       }
-    } catch {
-      setEditError("Network error updating party.");
+    } catch (err: any) {
+      setEditError(err.message || "Network error updating party.");
     } finally {
-      setEditSubmitting(false);
+      setEditLoading(false);
     }
   };
 
-  // Search filter
-  const filteredParties = parties.filter((p) => {
+  // Filter parties by search term and type tab
+  const filteredParties = parties.filter((party) => {
     const matchesSearch =
-      p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.phone && p.phone.includes(searchTerm)) ||
-      (p.gst_number && p.gst_number.toLowerCase().includes(searchTerm.toLowerCase()));
+      searchTerm.trim() === "" ||
+      party.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (party.phone && party.phone.includes(searchTerm)) ||
+      (party.gst_number && party.gst_number.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (party.state && party.state.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    if (filterType === "customer") {
+      return matchesSearch && (party.type === "customer" || party.type === "both");
+    }
+    if (filterType === "vendor") {
+      return matchesSearch && (party.type === "vendor" || party.type === "both");
+    }
     return matchesSearch;
   });
 
-  const totalCount = parties.length;
-  const customersCount = parties.filter((p) => p.type === "customer" || p.type === "both").length;
-  const vendorsCount = parties.filter((p) => p.type === "vendor" || p.type === "both").length;
+  const customerCount = parties.filter((p) => p.type === "customer" || p.type === "both").length;
+  const vendorCount = parties.filter((p) => p.type === "vendor" || p.type === "both").length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-cyan-500 selection:text-white">
-      {/* Header */}
-      <header className="border-b border-slate-800/80 backdrop-blur-md bg-slate-950/70 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
-                TF
-              </div>
-              <div>
-                <span className="font-bold text-sm tracking-tight text-white">Trade Flow</span>
-                <p className="text-[11px] text-slate-400">Medicine & Inventory</p>
-              </div>
-            </Link>
-
-            {/* Navigation Tabs */}
-            <nav className="hidden md:flex items-center gap-1 bg-slate-900/60 p-1 rounded-xl border border-slate-800 text-xs">
-              <Link
-                href="/"
-                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/inventory"
-                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                📦 Items & Catalog
-              </Link>
-              <Link
-                href="/parties"
-                className="px-3 py-1.5 rounded-lg bg-cyan-950/80 text-cyan-300 font-medium border border-cyan-800/60"
-              >
-                👥 Parties Directory
-              </Link>
-            </nav>
-          </div>
-
-          {/* User & Company Control */}
-          <div className="flex items-center gap-3">
-            <div className="relative" ref={dropdownRef}>
-              <button
-                onClick={() => setCompanyDropdownOpen(!companyDropdownOpen)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 transition-all cursor-pointer shadow-sm"
-              >
-                <span className="text-cyan-400">🏢</span>
-                <span className="font-medium max-w-[140px] truncate">
-                  {activeCompany ? activeCompany.name : "Select Company"}
-                </span>
-                {activeCompany && (
-                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
-                    {activeCompany.role}
-                  </span>
-                )}
-                <svg
-                  className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
-                    companyDropdownOpen ? "rotate-180" : ""
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </button>
-
-              {companyDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 backdrop-blur-xl animate-fadeIn">
-                  <div className="px-3 py-2 border-b border-slate-800/80 mb-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                      Switch Active Store
-                    </p>
-                  </div>
-                  <div className="max-h-56 overflow-y-auto space-y-1">
-                    {companies.map((comp) => {
-                      const isCurrent = activeCompany?.id === comp.id;
-                      return (
-                        <button
-                          key={comp.id}
-                          onClick={() => {
-                            selectCompany(comp);
-                            setCompanyDropdownOpen(false);
-                          }}
-                          className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between transition-colors ${
-                            isCurrent
-                              ? "bg-cyan-950/60 text-cyan-300 border border-cyan-800/50"
-                              : "hover:bg-slate-800/70 text-slate-300"
-                          }`}
-                        >
-                          <div className="truncate pr-2">
-                            <div className="font-medium truncate text-white">{comp.name}</div>
-                            {comp.gst_number && (
-                              <div className="text-[10px] text-slate-500 font-mono">
-                                {comp.gst_number}
-                              </div>
-                            )}
-                          </div>
-                          <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-                            {comp.role}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-2 pt-2 border-t border-slate-800/80">
-                    <Link
-                      href="/select-company"
-                      onClick={() => setCompanyDropdownOpen(false)}
-                      className="w-full block text-center py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-medium transition-colors"
-                    >
-                      + Manage Stores
-                    </Link>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 font-mono">
-              <span className="h-2 w-2 rounded-full bg-emerald-400"></span>
-              <span>@{user?.username}</span>
-            </div>
-
-            <button
-              onClick={logout}
-              className="px-3 py-1.5 rounded-xl border border-slate-800 text-slate-400 hover:text-rose-400 text-xs font-medium transition-colors cursor-pointer"
-            >
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-6 py-8 w-full flex-1">
-        {/* Page Banner & KPIs */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-8">
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-xs text-cyan-300 mb-2">
-              <span>👥</span>
-              <span>Multi-Tenant Customer & Vendor Directory</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Customers & Vendors Directory
-            </h1>
-            <p className="text-slate-400 text-xs sm:text-sm mt-1">
-              Active Store: <span className="text-white font-semibold">{activeCompany?.name}</span>
-            </p>
-          </div>
-
-          {/* Quick KPI stats */}
-          <div className="flex items-center gap-3">
-            <div className="bg-slate-900/80 border border-slate-800 px-4 py-2.5 rounded-2xl">
-              <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400 block">
-                Total Parties
-              </span>
-              <span className="text-lg font-extrabold text-white font-mono">
-                {totalCount}
-              </span>
-            </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 px-4 py-2.5 rounded-2xl">
-              <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400 block">
-                Customers
-              </span>
-              <span className="text-lg font-extrabold text-emerald-400 font-mono">
-                {customersCount}
-              </span>
-            </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 px-4 py-2.5 rounded-2xl">
-              <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400 block">
-                Vendors
-              </span>
-              <span className="text-lg font-extrabold text-cyan-300 font-mono">
-                {vendorsCount}
-              </span>
-            </div>
-
-            <button
-              id="add-party-btn"
-              onClick={() => setShowAddModal(true)}
-              className="px-5 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold text-xs transition-all shadow-lg shadow-cyan-500/20 flex items-center gap-2 cursor-pointer ml-2"
-            >
-              <span>+ Add Customer / Vendor</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Filter Tabs & Search Toolbar */}
-        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 mb-6 backdrop-blur-sm flex flex-col md:flex-row items-center justify-between gap-4">
-          {/* Tabs */}
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs w-full md:w-auto">
-            <button
-              onClick={() => setActiveTab("all")}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                activeTab === "all"
-                  ? "bg-slate-800 text-white shadow-sm"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              All ({totalCount})
-            </button>
-            <button
-              onClick={() => setActiveTab("customer")}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                activeTab === "customer"
-                  ? "bg-emerald-950 text-emerald-300 border border-emerald-800/60 shadow-sm"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              🛒 Customers ({customersCount})
-            </button>
-            <button
-              onClick={() => setActiveTab("vendor")}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                activeTab === "vendor"
-                  ? "bg-cyan-950 text-cyan-300 border border-cyan-800/60 shadow-sm"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              🏭 Vendors ({vendorsCount})
-            </button>
-            <button
-              onClick={() => setActiveTab("both")}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                activeTab === "both"
-                  ? "bg-purple-950 text-purple-300 border border-purple-800/60 shadow-sm"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              🔄 Both
-            </button>
-          </div>
-
-          {/* Search bar */}
-          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-            <div className="relative w-full md:w-72">
+    <AppLayout
+      pageTitle="Parties Directory"
+      pageSubtitle={`Customers and Vendor suppliers for ${activeCompany?.name || "your shop"}`}
+      headerActions={
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+          </svg>
+          <span>+ Add Customer / Vendor</span>
+        </button>
+      }
+    >
+      <div className="space-y-4 max-w-7xl mx-auto">
+        {/* Search & Type Filter Tabs */}
+        <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2 flex-1 max-w-md">
+            <div className="relative w-full">
               <input
                 type="text"
+                placeholder="Search by Party Name, Phone, State, or GSTIN..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search by name, phone, or GSTIN..."
-                className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
               />
-              <span className="absolute left-3 top-2.5 text-slate-500 text-xs">🔍</span>
+              <svg className="w-4 h-4 text-slate-400 absolute left-2.5 top-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
             </div>
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm("")}
+                className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
+          </div>
 
+          {/* Type Filter Tabs */}
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-md border border-slate-200 text-xs">
             <button
-              onClick={loadParties}
-              disabled={loading}
-              className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-white text-xs transition-colors cursor-pointer"
+              type="button"
+              onClick={() => setFilterType("all")}
+              className={`px-3 py-1 rounded font-semibold transition-colors cursor-pointer ${
+                filterType === "all"
+                  ? "bg-white text-slate-900 shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
             >
-              {loading ? "..." : "🔄 Refresh"}
+              All ({parties.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterType("customer")}
+              className={`px-3 py-1 rounded font-semibold transition-colors cursor-pointer ${
+                filterType === "customer"
+                  ? "bg-white text-blue-700 shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Customers ({customerCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterType("vendor")}
+              className={`px-3 py-1 rounded font-semibold transition-colors cursor-pointer ${
+                filterType === "vendor"
+                  ? "bg-white text-blue-700 shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Vendors ({vendorCount})
             </button>
           </div>
         </div>
 
-        {/* Parties List Table */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl backdrop-blur-sm">
-          {loading ? (
-            <div className="py-20 text-center text-cyan-400 flex items-center justify-center gap-3">
-              <span className="h-5 w-5 border-2 border-cyan-400/20 border-t-cyan-400 rounded-full animate-spin" />
-              <span className="text-xs font-medium">Loading party records...</span>
-            </div>
-          ) : error ? (
-            <div className="p-8 text-center text-rose-400 text-xs">{error}</div>
-          ) : filteredParties.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="h-12 w-12 rounded-2xl bg-cyan-950/80 border border-cyan-800/60 flex items-center justify-center text-xl mx-auto mb-3">
-                👥
+        {/* Error Alert */}
+        {error && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-xs font-medium">
+            {error}
+          </div>
+        )}
+
+        {/* Dense Parties Table */}
+        <div className="bg-white border border-slate-200 rounded-lg shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto min-h-[350px]">
+            {loading ? (
+              <div className="p-12 text-center text-xs text-slate-500">
+                <div className="inline-block w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <div>Loading directory...</div>
               </div>
-              <h3 className="text-sm font-semibold text-white">No Parties Found</h3>
-              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+            ) : filteredParties.length === 0 ? (
+              <div className="p-12 text-center text-xs text-slate-500">
                 {searchTerm
-                  ? "No customers or vendors match your search query."
-                  : "Add your first client or supplier to this company."}
-              </p>
-              {!searchTerm && (
-                <button
-                  onClick={() => setShowAddModal(true)}
-                  className="mt-4 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow-md shadow-cyan-600/20"
-                >
-                  + Add First Party
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+                  ? "No parties match your search query."
+                  : "No customer or vendor records found. Click '+ Add Customer / Vendor' above."}
+              </div>
+            ) : (
+              <table className="erp-table">
                 <thead>
-                  <tr className="border-b border-slate-800/80 bg-slate-950/60 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                    <th className="py-3.5 px-6">Party / Business Name</th>
-                    <th className="py-3.5 px-4">Type</th>
-                    <th className="py-3.5 px-4">Contact Phone</th>
-                    <th className="py-3.5 px-4">GSTIN</th>
-                    <th className="py-3.5 px-4">Address</th>
-                    <th className="py-3.5 px-6 text-right">Actions</th>
+                  <tr>
+                    <th>Party Name</th>
+                    <th>Type</th>
+                    <th>Phone</th>
+                    <th>Operating State</th>
+                    <th>GSTIN</th>
+                    <th>Address</th>
+                    <th className="text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 text-xs">
-                  {filteredParties.map((p) => (
-                    <tr
-                      key={p.id}
-                      className="hover:bg-slate-800/40 transition-colors group"
-                    >
-                      <td className="py-4 px-6">
-                        <div className="font-semibold text-white group-hover:text-cyan-300 transition-colors">
-                          {p.name}
-                        </div>
-                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                          ID: {p.id.substring(0, 8)}...
-                        </div>
+                <tbody>
+                  {filteredParties.map((party) => (
+                    <tr key={party.id}>
+                      <td className="font-bold text-slate-900 max-w-xs truncate">
+                        {party.name}
                       </td>
-
-                      <td className="py-4 px-4">
+                      <td>
                         <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase font-mono border ${
-                            p.type === "customer"
-                              ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-300"
-                              : p.type === "vendor"
-                              ? "bg-cyan-950/60 border-cyan-800/80 text-cyan-300"
-                              : "bg-purple-950/60 border-purple-800/80 text-purple-300"
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            party.type === "customer"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : party.type === "vendor"
+                              ? "bg-blue-50 text-blue-700 border border-blue-200"
+                              : "bg-purple-50 text-purple-700 border border-purple-200"
                           }`}
                         >
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              p.type === "customer"
-                                ? "bg-emerald-400"
-                                : p.type === "vendor"
-                                ? "bg-cyan-400"
-                                : "bg-purple-400"
-                            }`}
-                          />
-                          {p.type}
+                          {party.type}
                         </span>
                       </td>
-
-                      <td className="py-4 px-4 font-mono text-slate-300">
-                        {p.phone ? (
-                          <span className="text-slate-300">📞 {p.phone}</span>
-                        ) : (
-                          <span className="text-slate-600 italic">None</span>
-                        )}
+                      <td className="font-mono text-slate-700">{party.phone || "—"}</td>
+                      <td className="text-slate-800 font-medium capitalize">
+                        {party.state || "Maharashtra"}
                       </td>
-
-                      <td className="py-4 px-4 font-mono text-slate-400">
-                        {p.gst_number ? (
-                          <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-[11px] text-slate-300 uppercase">
-                            {p.gst_number}
-                          </span>
-                        ) : (
-                          <span className="text-slate-600">-</span>
-                        )}
+                      <td className="font-mono text-slate-500">{party.gst_number || "—"}</td>
+                      <td className="text-slate-500 max-w-xs truncate">
+                        {party.address || "—"}
                       </td>
-
-                      <td className="py-4 px-4 text-slate-400 max-w-xs truncate">
-                        {p.address ? (
-                          <span>📍 {p.address}</span>
-                        ) : (
-                          <span className="text-slate-600">-</span>
-                        )}
-                      </td>
-
-                      <td className="py-4 px-6 text-right space-x-2">
+                      <td className="text-right whitespace-nowrap space-x-2">
                         <button
-                          onClick={() => openDetailModal(p)}
-                          className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-medium border border-slate-700 transition-colors cursor-pointer"
+                          type="button"
+                          onClick={() => handleViewSummary(party)}
+                          className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                         >
-                          📊 Summary
+                          Summary
                         </button>
                         <button
-                          onClick={() => openEditModal(p)}
-                          className="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white text-[11px] font-medium border border-slate-800 transition-colors cursor-pointer"
+                          type="button"
+                          onClick={() => handleOpenEdit(party)}
+                          className="text-xs font-semibold text-slate-500 hover:text-slate-800 hover:underline cursor-pointer"
                         >
-                          ✏️ Edit
+                          Edit
                         </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </main>
+      </div>
 
       {/* Add Party Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg font-bold text-white">Add Customer / Vendor</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Scoped to {activeCompany?.name}
-                </p>
-              </div>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <h3 className="text-sm font-bold text-slate-900">
+                Add New Customer / Vendor
+              </h3>
               <button
                 onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-white text-sm p-1 rounded-lg hover:bg-slate-800"
+                className="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer"
               >
-                ✕
+                &times;
               </button>
             </div>
-
-            {formError && (
-              <div className="mb-5 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs">
-                ⚠️ {formError}
-              </div>
-            )}
-
-            <form onSubmit={handleAddParty} className="space-y-4">
+            <form onSubmit={handleAddParty} className="p-5 space-y-4">
+              {addError && (
+                <div className="p-2.5 rounded bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+                  {addError}
+                </div>
+              )}
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Party / Business Name *
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Party / Company Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. MedPlus Pharmacy or Sharma Distributors"
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  placeholder="e.g. City Care Hospital or Cipla Distribution"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 font-semibold"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Party Type *
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setType("customer")}
-                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                      type === "customer"
-                        ? "bg-emerald-950/80 border-emerald-600 text-emerald-300 ring-1 ring-emerald-500/50"
-                        : "bg-slate-950 border-slate-800 text-slate-400"
-                    }`}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Party Type <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={newType}
+                    onChange={(e) => setNewType(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 bg-white"
                   >
-                    🛒 Customer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setType("vendor")}
-                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                      type === "vendor"
-                        ? "bg-cyan-950/80 border-cyan-600 text-cyan-300 ring-1 ring-cyan-500/50"
-                        : "bg-slate-950 border-slate-800 text-slate-400"
-                    }`}
-                  >
-                    🏭 Vendor
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setType("both")}
-                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                      type === "both"
-                        ? "bg-purple-950/80 border-purple-600 text-purple-300 ring-1 ring-purple-500/50"
-                        : "bg-slate-950 border-slate-800 text-slate-400"
-                    }`}
-                  >
-                    🔄 Both
-                  </button>
+                    <option value="customer">Customer (Sales Outward)</option>
+                    <option value="vendor">Vendor / Supplier (Purchase Inward)</option>
+                    <option value="both">Both (Customer & Vendor)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. +91 9876543210"
+                    value={newPhone}
+                    onChange={(e) => setNewPhone(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Operating State (for GST)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Maharashtra or Delhi"
+                    value={newState}
+                    onChange={(e) => setNewState(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GSTIN Number (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 27AABCS1234F1Z1"
+                    value={newGst}
+                    onChange={(e) => setNewGst(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono uppercase focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
+                  />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Contact Phone (8-15 digits)
-                </label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="e.g. +91 9876543210"
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  GSTIN / Tax ID (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={gstNumber}
-                  onChange={(e) => setGstNumber(e.target.value)}
-                  placeholder="e.g. 27ABCDE1234F1Z5"
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Address (Optional)
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Billing Address
                 </label>
                 <textarea
                   rows={2}
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="e.g. Plot 42, Pharma Complex, Industrial Area"
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  placeholder="Street, locality, city, pincode"
+                  value={newAddress}
+                  onChange={(e) => setNewAddress(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 resize-none"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800 mt-6">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-xs font-medium"
+                  className="px-3 py-1.5 border border-slate-300 rounded text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={formSubmitting || !name.trim()}
-                  className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow-lg shadow-cyan-600/20 disabled:opacity-50"
+                  disabled={addLoading}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs font-semibold shadow-2xs transition-colors"
                 >
-                  {formSubmitting ? "Saving..." : "Add Party"}
+                  {addLoading ? "Saving..." : "Save Party"}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Party Detail & Summary Modal */}
-      {showDetailModal && selectedParty && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-800">
-              <div>
-                <span
-                  className={`text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full border font-semibold ${
-                    selectedParty.type === "customer"
-                      ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-300"
-                      : selectedParty.type === "vendor"
-                      ? "bg-cyan-950/60 border-cyan-800/80 text-cyan-300"
-                      : "bg-purple-950/60 border-purple-800/80 text-purple-300"
-                  }`}
-                >
-                  {selectedParty.type}
-                </span>
-                <h3 className="text-xl font-bold text-white mt-1.5">{selectedParty.name}</h3>
-                <p className="text-xs text-slate-400 font-mono">ID: {selectedParty.id}</p>
-              </div>
-              <button
-                onClick={() => setShowDetailModal(false)}
-                className="text-slate-400 hover:text-white text-sm p-1.5 rounded-lg hover:bg-slate-800"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Summary Statistics */}
-            {summaryLoading ? (
-              <div className="py-8 text-center text-cyan-400 text-xs">
-                Computing invoice aggregates...
-              </div>
-            ) : partySummary ? (
-              <div className="space-y-5">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800">
-                    <span className="text-[10px] uppercase font-semibold text-slate-500 block">
-                      Sales Invoices
-                    </span>
-                    <span className="text-base font-bold text-emerald-400 font-mono">
-                      {partySummary.sales_invoices_count}
-                    </span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">
-                      ₹{partySummary.total_sales_amount.toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800">
-                    <span className="text-[10px] uppercase font-semibold text-slate-500 block">
-                      Purchase Invoices
-                    </span>
-                    <span className="text-base font-bold text-cyan-300 font-mono">
-                      {partySummary.purchase_invoices_count}
-                    </span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">
-                      ₹{partySummary.total_purchase_amount.toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 col-span-2 sm:col-span-1">
-                    <span className="text-[10px] uppercase font-semibold text-slate-500 block">
-                      Outstanding
-                    </span>
-                    <span className="text-base font-bold text-slate-300 font-mono">
-                      ₹{partySummary.outstanding_balance.toFixed(2)}
-                    </span>
-                    <span className="text-[10px] text-slate-500 block mt-0.5">
-                      Balance Due
-                    </span>
-                  </div>
-                </div>
-
-                {/* Contact Information */}
-                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2 text-xs">
-                  <div className="flex justify-between py-1 border-b border-slate-900">
-                    <span className="text-slate-500">Phone:</span>
-                    <span className="font-mono text-slate-200">
-                      {selectedParty.phone || "None"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-slate-900">
-                    <span className="text-slate-500">GSTIN:</span>
-                    <span className="font-mono text-slate-200 uppercase">
-                      {selectedParty.gst_number || "Unregistered"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-slate-900">
-                    <span className="text-slate-500">Address:</span>
-                    <span className="text-slate-200 text-right max-w-xs">
-                      {selectedParty.address || "None"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-slate-500">Created:</span>
-                    <span className="font-mono text-slate-400">
-                      {new Date(selectedParty.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button
-                    onClick={() => {
-                      setShowDetailModal(false);
-                      openEditModal(selectedParty);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-colors"
-                  >
-                    ✏️ Edit Details
-                  </button>
-                </div>
-              </div>
-            ) : null}
           </div>
         </div>
       )}
 
       {/* Edit Party Modal */}
       {showEditModal && selectedParty && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg font-bold text-white">Edit Party</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Type cannot be changed if invoices are linked
-                </p>
-              </div>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <h3 className="text-sm font-bold text-slate-900">
+                Edit Party Details
+              </h3>
               <button
-                onClick={() => setShowEditModal(false)}
-                className="text-slate-400 hover:text-white text-sm p-1 rounded-lg hover:bg-slate-800"
+                onClick={() => {
+                  setShowEditModal(false);
+                  setSelectedParty(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer"
               >
-                ✕
+                &times;
               </button>
             </div>
-
-            {editError && (
-              <div className="mb-5 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs">
-                ⚠️ {editError}
-              </div>
-            )}
-
-            <form onSubmit={handleEditParty} className="space-y-4">
+            <form onSubmit={handleEditParty} className="p-5 space-y-4">
+              {editError && (
+                <div className="p-2.5 rounded bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+                  {editError}
+                </div>
+              )}
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Party / Business Name *
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Party Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 font-semibold"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Party Type
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditType("customer")}
-                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                      editType === "customer"
-                        ? "bg-emerald-950/80 border-emerald-600 text-emerald-300 ring-1 ring-emerald-500/50"
-                        : "bg-slate-950 border-slate-800 text-slate-400"
-                    }`}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Party Type
+                  </label>
+                  <select
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 bg-white"
                   >
-                    🛒 Customer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditType("vendor")}
-                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                      editType === "vendor"
-                        ? "bg-cyan-950/80 border-cyan-600 text-cyan-300 ring-1 ring-cyan-500/50"
-                        : "bg-slate-950 border-slate-800 text-slate-400"
-                    }`}
-                  >
-                    🏭 Vendor
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditType("both")}
-                    className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                      editType === "both"
-                        ? "bg-purple-950/80 border-purple-600 text-purple-300 ring-1 ring-purple-500/50"
-                        : "bg-slate-950 border-slate-800 text-slate-400"
-                    }`}
-                  >
-                    🔄 Both
-                  </button>
+                    <option value="customer">Customer</option>
+                    <option value="vendor">Vendor</option>
+                    <option value="both">Both</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Operating State
+                  </label>
+                  <input
+                    type="text"
+                    value={editState}
+                    onChange={(e) => setEditState(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GSTIN Number
+                  </label>
+                  <input
+                    type="text"
+                    value={editGst}
+                    onChange={(e) => setEditGst(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono uppercase focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
+                  />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Contact Phone
-                </label>
-                <input
-                  type="tel"
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  GSTIN / Tax ID
-                </label>
-                <input
-                  type="text"
-                  value={editGstNumber}
-                  onChange={(e) => setEditGstNumber(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Address
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Billing Address
                 </label>
                 <textarea
                   rows={2}
                   value={editAddress}
                   onChange={(e) => setEditAddress(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 resize-none"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800 mt-6">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setShowEditModal(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-xs font-medium"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setSelectedParty(null);
+                  }}
+                  className="px-3 py-1.5 border border-slate-300 rounded text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={editSubmitting || !editName.trim()}
-                  className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow-lg shadow-cyan-600/20 disabled:opacity-50"
+                  disabled={editLoading}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs font-semibold shadow-2xs transition-colors"
                 >
-                  {editSubmitting ? "Updating..." : "Save Changes"}
+                  {editLoading ? "Updating..." : "Save Changes"}
                 </button>
               </div>
             </form>
@@ -1046,10 +636,106 @@ export default function PartiesPage() {
         </div>
       )}
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-600">
-        Trade Flow Parties Management &bull; Phase 4 Active
-      </footer>
-    </div>
+      {/* Party Financial Summary Drawer */}
+      {showSummaryDrawer && selectedParty && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Party Account Summary
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {selectedParty.name} &bull; <span className="capitalize">{selectedParty.type}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowSummaryDrawer(false);
+                  setSelectedParty(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {summaryLoading ? (
+                <div className="p-8 text-center text-xs text-slate-500">
+                  Calculating account metrics...
+                </div>
+              ) : summaryData ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-slate-50 border border-slate-200 rounded p-3">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                        Sales Invoices
+                      </span>
+                      <span className="text-lg font-bold text-slate-900">
+                        {summaryData.sales_invoices_count}
+                      </span>
+                      <div className="text-[11px] text-emerald-700 font-semibold mt-1">
+                        Total ₹{Number(summaryData.total_sales_amount).toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded p-3">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                        Purchase Bills
+                      </span>
+                      <span className="text-lg font-bold text-slate-900">
+                        {summaryData.purchase_invoices_count}
+                      </span>
+                      <div className="text-[11px] text-blue-700 font-semibold mt-1">
+                        Total ₹{Number(summaryData.total_purchase_amount).toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded p-3 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-blue-900 uppercase tracking-wider block">
+                        Outstanding Balance
+                      </span>
+                      <span className="text-xs text-blue-700 font-medium">
+                        Current ledger balance
+                      </span>
+                    </div>
+                    <span className="text-base font-bold text-blue-950 font-mono">
+                      ₹{Number(summaryData.outstanding_balance).toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div className="text-[11px] text-slate-500 space-y-1 pt-2 border-t border-slate-200">
+                    <div><strong>Phone:</strong> {selectedParty.phone || "Not provided"}</div>
+                    <div><strong>GSTIN:</strong> {selectedParty.gst_number || "Unregistered"}</div>
+                    <div><strong>State:</strong> {selectedParty.state || "Maharashtra"}</div>
+                    <div><strong>Address:</strong> {selectedParty.address || "Not provided"}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 text-center py-4">
+                  Unable to load summary data.
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSummaryDrawer(false);
+                  setSelectedParty(null);
+                }}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded text-xs font-semibold"
+              >
+                Close Summary
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }

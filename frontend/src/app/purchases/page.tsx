@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import Link from "next/link";
+import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
+import AppLayout from "../../components/AppLayout";
 
 export interface PurchaseInvoice {
   id: string;
@@ -20,15 +20,8 @@ export interface PurchaseInvoice {
 }
 
 export default function PurchasesPage() {
-  const {
-    user,
-    companies,
-    activeCompany,
-    selectCompany,
-    loading: authLoading,
-    logout,
-    apiFetch,
-  } = useAuth();
+  const { user, token, activeCompany, loading: authLoading, apiFetch } = useAuth();
+  const router = useRouter();
 
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
@@ -50,29 +43,14 @@ export default function PurchasesPage() {
   );
   const [lines, setLines] = useState<
     Array<{ item_id: string; quantity: string; rate: string; gst_rate: string }>
-  >([{ item_id: "", quantity: "1", rate: "100", gst_rate: "12" }]);
+  >([{ item_id: "", quantity: "10", rate: "80", gst_rate: "12" }]);
 
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Header dropdown state
-  const [companyDropdownOpen, setCompanyDropdownOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setCompanyDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
   const loadData = useCallback(async () => {
-    if (!activeCompany) return;
+    if (!activeCompany?.id) return;
     setLoading(true);
     setError(null);
     try {
@@ -92,25 +70,44 @@ export default function PurchasesPage() {
       if (vendRes.ok) setVendors(vendData.parties || []);
       if (itemsRes.ok) setItems(itemsData.items || []);
     } catch {
-      setError("Failed to load purchase invoices.");
+      setError("Failed to load purchase records.");
     } finally {
       setLoading(false);
     }
-  }, [activeCompany, apiFetch]);
+  }, [activeCompany?.id, apiFetch]);
 
   useEffect(() => {
     if (!authLoading && !user) {
       router.push("/login");
-    } else if (!authLoading && !activeCompany) {
-      router.push("/select-company");
-    } else if (activeCompany) {
+      return;
+    }
+    if (activeCompany?.id) {
       loadData();
     }
-  }, [user, activeCompany, authLoading, router, loadData]);
+  }, [authLoading, user, activeCompany?.id, loadData, router]);
 
-  // Line calculations
+  const handleOpenAdd = () => {
+    setInvoiceNumber(`PUR-${Date.now().toString().slice(-6)}`);
+    setVendorId(vendors[0]?.id || "");
+    setLines([{ item_id: items[0]?.id || "", quantity: "10", rate: "80", gst_rate: String(items[0]?.gst_rate || 12) }]);
+    setFormError(null);
+    setShowAddModal(true);
+  };
+
+  const handleLineItemChange = (index: number, field: string, value: string) => {
+    const updated = [...lines];
+    updated[index] = { ...updated[index], [field]: value };
+    if (field === "item_id") {
+      const selectedProduct = items.find((i) => i.id === value);
+      if (selectedProduct) {
+        updated[index].gst_rate = String(selectedProduct.gst_rate || 12);
+      }
+    }
+    setLines(updated);
+  };
+
   const addLine = () => {
-    setLines([...lines, { item_id: "", quantity: "1", rate: "100", gst_rate: "12" }]);
+    setLines([...lines, { item_id: items[0]?.id || "", quantity: "10", rate: "80", gst_rate: "12" }]);
   };
 
   const removeLine = (index: number) => {
@@ -119,58 +116,32 @@ export default function PurchasesPage() {
     }
   };
 
-  const updateLine = (index: number, field: string, value: string) => {
-    const updated = [...lines];
-    updated[index] = { ...updated[index], [field]: value };
-    if (field === "item_id") {
-      const foundItem = items.find((it) => it.id === value);
-      if (foundItem) {
-        updated[index].gst_rate = String(foundItem.gst_rate ?? 12);
-      }
-    }
-    setLines(updated);
-  };
+  let computedSubtotal = 0;
+  let computedGst = 0;
+  lines.forEach((l) => {
+    const q = Number(l.quantity) || 0;
+    const r = Number(l.rate) || 0;
+    const g = Number(l.gst_rate) || 0;
+    const taxable = q * r;
+    const tax = taxable * (g / 100);
+    computedSubtotal += taxable;
+    computedGst += tax;
+  });
+  const computedTotal = computedSubtotal + computedGst;
 
-  const calculateTotals = () => {
-    let subtotal = 0;
-    let totalTax = 0;
-    for (const l of lines) {
-      const q = Number(l.quantity) || 0;
-      const r = Number(l.rate) || 0;
-      const g = Number(l.gst_rate) || 0;
-      const tax = q * r * (g / 100);
-      subtotal += q * r;
-      totalTax += tax;
-    }
-    return {
-      subtotal: Math.round(subtotal * 100) / 100,
-      tax: Math.round(totalTax * 100) / 100,
-      total: Math.round((subtotal + totalTax) * 100) / 100,
-    };
-  };
-
-  const totals = calculateTotals();
-
-  // Create Purchase Submit
-  const handleCreatePurchase = async (e: React.FormEvent, autoConfirm: boolean = false) => {
+  // Create Purchase Bill
+  const handleCreatePurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!vendorId) {
-      setFormError("Please select a vendor.");
+      setFormError("Please select a vendor supplier.");
       return;
     }
     if (!invoiceNumber.trim()) {
-      setFormError("Invoice number is required.");
+      setFormError("Purchase bill number is required.");
       return;
     }
-    for (let i = 0; i < lines.length; i++) {
-      if (!lines[i].item_id) {
-        setFormError(`Please select an item on line #${i + 1}`);
-        return;
-      }
-    }
-
-    setFormError(null);
     setFormSubmitting(true);
+    setFormError(null);
 
     try {
       const payload = {
@@ -191,463 +162,394 @@ export default function PurchasesPage() {
       });
 
       const data = await res.json();
-
-      if (!res.ok) {
-        const errorMsg = Array.isArray(data.message)
-          ? data.message.join(", ")
-          : data.message || "Failed to create invoice.";
-        setFormError(errorMsg);
-        setFormSubmitting(false);
-        return;
+      if (res.ok) {
+        setShowAddModal(false);
+        loadData();
+      } else {
+        setFormError(data.message || "Failed to create purchase bill.");
       }
-
-      if (autoConfirm && data.invoice?.id) {
-        await apiFetch(`/purchases/${data.invoice.id}/confirm`, { method: "POST" });
-      }
-
-      setShowAddModal(false);
-      setInvoiceNumber("");
-      setLines([{ item_id: "", quantity: "1", rate: "100", gst_rate: "12" }]);
-      loadData();
-    } catch {
-      setFormError("Unexpected network error creating purchase invoice.");
+    } catch (err: any) {
+      setFormError(err.message || "Network error.");
     } finally {
       setFormSubmitting(false);
     }
   };
 
-  // Open Invoice Detail
-  const openInvoiceDetail = async (inv: PurchaseInvoice) => {
-    setSelectedInvoice(inv);
-    setShowDetailModal(true);
-    setDetailLoading(true);
+  // Confirm Purchase (inward stock receipt)
+  const handleConfirmPurchase = async (invoiceId: string) => {
+    setActionLoading(true);
     try {
-      const res = await apiFetch(`/purchases/${inv.id}`);
+      const res = await apiFetch(`/purchases/${invoiceId}/confirm`, {
+        method: "POST",
+      });
       const data = await res.json();
-      if (res.ok) setSelectedInvoice(data.invoice);
+      if (res.ok) {
+        loadData();
+        if (showDetailModal && selectedInvoice?.id === invoiceId) {
+          handleViewDetail(invoiceId);
+        }
+      } else {
+        alert(data.message || "Failed to confirm purchase bill.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Error confirming purchase bill.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Cancel Purchase Bill
+  const handleCancelPurchase = async (invoiceId: string) => {
+    if (!confirm("Are you sure you want to cancel this draft purchase bill?")) return;
+    setActionLoading(true);
+    try {
+      const res = await apiFetch(`/purchases/${invoiceId}/cancel`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        loadData();
+        if (showDetailModal && selectedInvoice?.id === invoiceId) {
+          setShowDetailModal(false);
+        }
+      } else {
+        alert(data.message || "Failed to cancel bill.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Error cancelling bill.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // View Bill Detail
+  const handleViewDetail = async (invoiceId: string) => {
+    setDetailLoading(true);
+    setShowDetailModal(true);
+    try {
+      const res = await apiFetch(`/purchases/${invoiceId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedInvoice(data.invoice);
+      }
+    } catch {
+      // Ignore
     } finally {
       setDetailLoading(false);
     }
   };
 
-  // Confirm Invoice Action
-  const handleConfirm = async (id: string) => {
-    setActionLoading(true);
-    try {
-      const res = await apiFetch(`/purchases/${id}/confirm`, { method: "POST" });
-      const data = await res.json();
-      if (res.ok) {
-        setShowDetailModal(false);
-        loadData();
-      } else {
-        alert(data.message || "Failed to confirm invoice.");
-      }
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  // Cancel Invoice Action
-  const handleCancel = async (id: string) => {
-    if (!confirm("Are you sure you want to cancel this draft purchase invoice?")) return;
-    setActionLoading(true);
-    try {
-      const res = await apiFetch(`/purchases/${id}/cancel`, { method: "POST" });
-      if (res.ok) {
-        setShowDetailModal(false);
-        loadData();
-      }
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-cyan-500 selection:text-white">
-      {/* Header */}
-      <header className="border-b border-slate-800/80 backdrop-blur-md bg-slate-950/70 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
-                TF
-              </div>
-              <div>
-                <span className="font-bold text-sm tracking-tight text-white">Trade Flow</span>
-                <p className="text-[11px] text-slate-400">Medicine & Inventory</p>
-              </div>
-            </Link>
-
-            <nav className="hidden md:flex items-center gap-1 bg-slate-900/60 p-1 rounded-xl border border-slate-800 text-xs">
-              <Link
-                href="/"
-                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/inventory"
-                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                📦 Items
-              </Link>
-              <Link
-                href="/parties"
-                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                👥 Parties
-              </Link>
-              <Link
-                href="/sales"
-                className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                🧾 Sales Billing
-              </Link>
-              <Link
-                href="/purchases"
-                className="px-3 py-1.5 rounded-lg bg-cyan-950/80 text-cyan-300 font-medium border border-cyan-800/60"
-              >
-                📥 Purchases
-              </Link>
-            </nav>
+    <AppLayout
+      pageTitle="Purchase Bills & Inward Stock"
+      pageSubtitle={`Inward medicine procurement and supplier bills for ${activeCompany?.name || "your shop"}`}
+      headerActions={
+        <button
+          onClick={handleOpenAdd}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+          </svg>
+          <span>+ Record Purchase Bill</span>
+        </button>
+      }
+    >
+      <div className="space-y-4 max-w-7xl mx-auto">
+        {/* Error Alert */}
+        {error && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-xs font-medium">
+            {error}
           </div>
+        )}
 
-          <div className="flex items-center gap-3">
-            <div className="relative" ref={dropdownRef}>
-              <button
-                onClick={() => setCompanyDropdownOpen(!companyDropdownOpen)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200"
-              >
-                <span>🏢</span>
-                <span className="font-medium max-w-[140px] truncate">{activeCompany?.name}</span>
-                <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
-                  {activeCompany?.role}
-                </span>
-              </button>
-            </div>
-            <button
-              onClick={logout}
-              className="px-3 py-1.5 rounded-xl border border-slate-800 text-slate-400 hover:text-rose-400 text-xs font-medium cursor-pointer"
-            >
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8 w-full flex-1">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-xs text-cyan-300 mb-2">
-              <span>📥</span>
-              <span>Inward Vendor Invoices & Stock Receipts</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Purchase Invoices
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-400 mt-1">
-              Store: <span className="text-white font-semibold">{activeCompany?.name}</span>
-            </p>
-          </div>
-
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-5 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold text-xs transition-all shadow-lg shadow-cyan-500/20 flex items-center gap-2 cursor-pointer self-start sm:self-auto"
-          >
-            <span>+ New Purchase Invoice</span>
-          </button>
-        </div>
-
-        {/* Invoice List Table */}
-        <div className="bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl backdrop-blur-sm">
-          {loading ? (
-            <div className="py-20 text-center text-cyan-400 text-xs">
-              Loading purchase bills...
-            </div>
-          ) : invoices.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="h-12 w-12 rounded-2xl bg-cyan-950/80 border border-cyan-800/60 flex items-center justify-center text-xl mx-auto mb-3">
-                📥
+        {/* Dense Purchases Table */}
+        <div className="bg-white border border-slate-200 rounded-lg shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto min-h-[350px]">
+            {loading ? (
+              <div className="p-12 text-center text-xs text-slate-500">
+                <div className="inline-block w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <div>Loading purchase records...</div>
               </div>
-              <h3 className="text-sm font-semibold text-white">No Purchase Invoices Yet</h3>
-              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                Record purchases from pharmaceutical distributors to increase stock inventory.
-              </p>
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="mt-4 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold"
-              >
-                + Create First Purchase
-              </button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+            ) : invoices.length === 0 ? (
+              <div className="p-12 text-center text-xs text-slate-500">
+                No inward purchase bills recorded yet. Click "+ Record Purchase Bill" above.
+              </div>
+            ) : (
+              <table className="erp-table">
                 <thead>
-                  <tr className="border-b border-slate-800/80 bg-slate-950/60 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                    <th className="py-3.5 px-6">Invoice #</th>
-                    <th className="py-3.5 px-4">Date</th>
-                    <th className="py-3.5 px-4">Supplier / Vendor</th>
-                    <th className="py-3.5 px-4">GST Tax</th>
-                    <th className="py-3.5 px-4">Total Amount</th>
-                    <th className="py-3.5 px-4">Status</th>
-                    <th className="py-3.5 px-6 text-right">Actions</th>
+                  <tr>
+                    <th>Bill Date</th>
+                    <th>Bill #</th>
+                    <th>Supplier / Vendor</th>
+                    <th className="text-right">Taxable (₹)</th>
+                    <th className="text-right">GST (₹)</th>
+                    <th className="text-right">Total (₹)</th>
+                    <th className="text-center">Status</th>
+                    <th className="text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 text-xs">
-                  {invoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="py-4 px-6 font-mono font-bold text-white">
-                        {inv.invoice_number}
-                      </td>
-                      <td className="py-4 px-4 font-mono text-slate-400">{inv.invoice_date}</td>
-                      <td className="py-4 px-4 font-medium text-slate-200">
-                        {inv.party?.name || "Unknown Vendor"}
-                      </td>
-                      <td className="py-4 px-4 font-mono text-slate-400">
-                        ₹{inv.gst_amount.toFixed(2)}
-                      </td>
-                      <td className="py-4 px-4 font-mono font-bold text-cyan-300">
-                        ₹{inv.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-4 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase font-mono border ${
-                            inv.status === "confirmed"
-                              ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-300"
-                              : inv.status === "draft"
-                              ? "bg-amber-950/60 border-amber-800/80 text-amber-300"
-                              : "bg-slate-800 border-slate-700 text-slate-400"
-                          }`}
-                        >
+                <tbody>
+                  {invoices.map((inv) => {
+                    const taxable = Math.max(0, Number(inv.total_amount) - Number(inv.gst_amount));
+                    return (
+                      <tr key={inv.id}>
+                        <td className="text-slate-600 whitespace-nowrap">{inv.invoice_date}</td>
+                        <td className="font-mono font-bold text-slate-900">{inv.invoice_number}</td>
+                        <td className="font-medium text-slate-900 max-w-xs truncate">
+                          {inv.party?.name || "Direct Supplier"}
+                        </td>
+                        <td className="text-right font-mono text-slate-700">
+                          ₹{taxable.toFixed(2)}
+                        </td>
+                        <td className="text-right font-mono text-blue-700 font-semibold">
+                          ₹{Number(inv.gst_amount).toFixed(2)}
+                        </td>
+                        <td className="text-right font-mono font-bold text-slate-900">
+                          ₹{Number(inv.total_amount).toFixed(2)}
+                        </td>
+                        <td className="text-center">
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                               inv.status === "confirmed"
-                                ? "bg-emerald-400"
+                                ? "bg-blue-50 text-blue-700 border border-blue-200"
                                 : inv.status === "draft"
-                                ? "bg-amber-400"
-                                : "bg-slate-500"
+                                ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                : "bg-red-50 text-red-700 border border-red-200"
                             }`}
-                          />
-                          {inv.status}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        <button
-                          onClick={() => openInvoiceDetail(inv)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-medium border border-slate-700 cursor-pointer"
-                        >
-                          View & Manage &rarr;
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                          >
+                            {inv.status}
+                          </span>
+                        </td>
+                        <td className="text-right whitespace-nowrap space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => handleViewDetail(inv.id)}
+                            className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            View Bill
+                          </button>
+                          {inv.status === "draft" && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={actionLoading}
+                                onClick={() => handleConfirmPurchase(inv.id)}
+                                className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 hover:underline cursor-pointer"
+                              >
+                                Confirm Inward
+                              </button>
+                              <button
+                                type="button"
+                                disabled={actionLoading}
+                                onClick={() => handleCancelPurchase(inv.id)}
+                                className="text-xs font-semibold text-red-600 hover:text-red-800 hover:underline cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </main>
+      </div>
 
-      {/* Add Purchase Modal */}
+      {/* Record Purchase Bill Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-3xl w-full shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-800">
-              <div>
-                <h3 className="text-lg font-bold text-white">Create Purchase Invoice</h3>
-                <p className="text-xs text-slate-400">Record stock incoming from supplier</p>
-              </div>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-2xl w-full max-w-3xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <h3 className="text-sm font-bold text-slate-900">
+                Inward Purchase Bill Entry
+              </h3>
               <button
                 onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-white text-sm p-1 rounded-lg hover:bg-slate-800"
+                className="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer"
               >
-                ✕
+                &times;
               </button>
             </div>
+            <form onSubmit={handleCreatePurchase} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              {formError && (
+                <div className="p-2.5 rounded bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
+                  {formError}
+                </div>
+              )}
 
-            {formError && (
-              <div className="mb-5 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs">
-                ⚠️ {formError}
-              </div>
-            )}
-
-            <form className="space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Select Vendor *
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Vendor / Supplier <span className="text-red-500">*</span>
                   </label>
                   <select
+                    required
                     value={vendorId}
                     onChange={(e) => setVendorId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:ring-2 focus:ring-cyan-500/50"
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900 bg-white font-medium"
                   >
-                    <option value="">-- Choose Vendor --</option>
+                    {vendors.length === 0 && <option value="">No vendors available</option>}
                     {vendors.map((v) => (
                       <option key={v.id} value={v.id}>
-                        {v.name}
+                        {v.name} {v.phone ? `(${v.phone})` : ""}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Invoice Number *
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Supplier Bill Number <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
                     required
                     value={invoiceNumber}
                     onChange={(e) => setInvoiceNumber(e.target.value)}
-                    placeholder="e.g. BILL-2026-001"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs font-mono focus:ring-2 focus:ring-cyan-500/50"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs font-mono font-bold focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Invoice Date
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Bill Date
                   </label>
                   <input
                     type="date"
+                    required
                     value={invoiceDate}
                     onChange={(e) => setInvoiceDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs font-mono focus:ring-2 focus:ring-cyan-500/50"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none text-slate-900"
                   />
                 </div>
               </div>
 
-              {/* Line Items */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-slate-300">Medicines / Line Items</span>
+              {/* Line Items Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Medicines Received
+                  </h4>
                   <button
                     type="button"
                     onClick={addLine}
-                    className="text-xs text-cyan-400 hover:text-cyan-300 font-medium cursor-pointer"
+                    className="text-xs text-blue-600 hover:text-blue-800 font-semibold cursor-pointer"
                   >
-                    + Add Another Item
+                    + Add Item Line
                   </button>
                 </div>
 
                 <div className="space-y-2">
-                  {lines.map((line, idx) => (
-                    <div
-                      key={idx}
-                      className="grid grid-cols-12 gap-2 bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 items-center text-xs"
-                    >
-                      <div className="col-span-5">
-                        <select
-                          value={line.item_id}
-                          onChange={(e) => updateLine(idx, "item_id", e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-white text-xs"
-                        >
-                          <option value="">Select Item / Medicine...</option>
-                          {items.map((it) => (
-                            <option key={it.id} value={it.id}>
-                              {it.name} ({it.unit})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                  {lines.map((line, idx) => {
+                    const q = Number(line.quantity) || 0;
+                    const r = Number(line.rate) || 0;
+                    const g = Number(line.gst_rate) || 0;
+                    const lineTot = q * r * (1 + g / 100);
 
-                      <div className="col-span-2">
-                        <input
-                          type="number"
-                          placeholder="Qty"
-                          min="0.01"
-                          step="any"
-                          value={line.quantity}
-                          onChange={(e) => updateLine(idx, "quantity", e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs"
-                        />
-                      </div>
+                    return (
+                      <div
+                        key={idx}
+                        className="grid grid-cols-12 gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded items-center text-xs"
+                      >
+                        <div className="col-span-5">
+                          <select
+                            required
+                            value={line.item_id}
+                            onChange={(e) => handleLineItemChange(idx, "item_id", e.target.value)}
+                            className="w-full px-2 py-1.5 border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 outline-none text-slate-900 bg-white"
+                          >
+                            {items.map((it) => (
+                              <option key={it.id} value={it.id}>
+                                {it.name} (Stock: {it.current_stock} {it.unit})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                      <div className="col-span-2">
-                        <input
-                          type="number"
-                          placeholder="Rate ₹"
-                          min="0"
-                          step="any"
-                          value={line.rate}
-                          onChange={(e) => updateLine(idx, "rate", e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs"
-                        />
-                      </div>
+                        <div className="col-span-2">
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="any"
+                            placeholder="Qty"
+                            required
+                            value={line.quantity}
+                            onChange={(e) => handleLineItemChange(idx, "quantity", e.target.value)}
+                            className="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-right"
+                          />
+                        </div>
 
-                      <div className="col-span-2">
-                        <select
-                          value={line.gst_rate}
-                          onChange={(e) => updateLine(idx, "gst_rate", e.target.value)}
-                          className="w-full px-2 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs"
-                        >
-                          <option value="0">0%</option>
-                          <option value="5">5%</option>
-                          <option value="12">12%</option>
-                          <option value="18">18%</option>
-                          <option value="28">28%</option>
-                        </select>
-                      </div>
+                        <div className="col-span-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="Purchase Rate"
+                            required
+                            value={line.rate}
+                            onChange={(e) => handleLineItemChange(idx, "rate", e.target.value)}
+                            className="w-full px-2 py-1.5 border border-slate-300 rounded text-xs font-mono text-right"
+                          />
+                        </div>
 
-                      <div className="col-span-1 text-center">
-                        <button
-                          type="button"
-                          onClick={() => removeLine(idx)}
-                          className="text-slate-500 hover:text-rose-400 p-1 rounded"
-                        >
-                          ✕
-                        </button>
+                        <div className="col-span-2 text-right font-mono font-bold text-slate-900 truncate">
+                          ₹{lineTot.toFixed(2)}
+                        </div>
+
+                        <div className="col-span-1 text-center">
+                          {lines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeLine(idx)}
+                              className="text-red-500 hover:text-red-700 font-bold text-sm cursor-pointer"
+                            >
+                              &times;
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Totals Summary */}
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex justify-end">
-                <div className="w-64 space-y-1.5 text-xs">
-                  <div className="flex justify-between text-slate-400">
+              {/* Total Summary Footer */}
+              <div className="flex justify-end pt-3 border-t border-slate-200">
+                <div className="w-64 space-y-1 text-right text-xs">
+                  <div className="flex justify-between text-slate-600">
                     <span>Taxable Subtotal:</span>
-                    <span className="font-mono">₹{totals.subtotal.toFixed(2)}</span>
+                    <span className="font-mono">₹{computedSubtotal.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>GST Tax:</span>
-                    <span className="font-mono">₹{totals.tax.toFixed(2)}</span>
+                  <div className="flex justify-between text-slate-600">
+                    <span>Total GST:</span>
+                    <span className="font-mono text-blue-700">₹{computedGst.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-white text-sm pt-2 border-t border-slate-800">
-                    <span>Total Amount:</span>
-                    <span className="font-mono text-cyan-300">₹{totals.total.toFixed(2)}</span>
+                  <div className="flex justify-between text-sm font-bold text-slate-900 pt-1 border-t border-slate-200">
+                    <span>Grand Total:</span>
+                    <span className="font-mono text-emerald-700">₹{computedTotal.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-800 text-slate-400 hover:text-white text-xs"
+                  className="px-3 py-1.5 border border-slate-300 rounded text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
                 <button
-                  type="button"
+                  type="submit"
                   disabled={formSubmitting}
-                  onClick={(e) => handleCreatePurchase(e, false)}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold"
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
                 >
-                  Save as Draft
-                </button>
-                <button
-                  type="button"
-                  disabled={formSubmitting}
-                  onClick={(e) => handleCreatePurchase(e, true)}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-semibold shadow-lg shadow-cyan-500/20"
-                >
-                  Save & Confirm (Receive Stock)
+                  {formSubmitting ? "Recording..." : "Save Draft Bill"}
                 </button>
               </div>
             </form>
@@ -655,106 +557,139 @@ export default function PurchasesPage() {
         </div>
       )}
 
-      {/* Invoice Detail Modal */}
+      {/* View Purchase Bill Modal */}
       {showDetailModal && selectedInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-800">
-              <div>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-slate-900">
+                  Purchase Bill: {selectedInvoice.invoice_number}
+                </span>
                 <span
-                  className={`text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full border font-semibold ${
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                     selectedInvoice.status === "confirmed"
-                      ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-300"
+                      ? "bg-blue-100 text-blue-800"
                       : selectedInvoice.status === "draft"
-                      ? "bg-amber-950/60 border-amber-800/80 text-amber-300"
-                      : "bg-slate-800 border-slate-700 text-slate-400"
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-red-100 text-red-800"
                   }`}
                 >
                   {selectedInvoice.status}
                 </span>
-                <h3 className="text-xl font-bold text-white mt-1.5">
-                  Purchase: {selectedInvoice.invoice_number}
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Supplier: <span className="text-slate-200">{selectedInvoice.party?.name}</span> &bull; Date: {selectedInvoice.invoice_date}
-                </p>
               </div>
               <button
                 onClick={() => setShowDetailModal(false)}
-                className="text-slate-400 hover:text-white text-sm p-1.5 rounded-lg hover:bg-slate-800"
+                className="text-slate-400 hover:text-slate-600 text-xl leading-none cursor-pointer"
               >
-                ✕
+                &times;
               </button>
             </div>
 
-            {detailLoading ? (
-              <div className="py-8 text-center text-cyan-400 text-xs">Loading line items...</div>
-            ) : (
-              <div className="space-y-4">
-                <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="bg-slate-900/60 text-[10px] uppercase font-semibold text-slate-400 border-b border-slate-800">
-                        <th className="py-2.5 px-4">Item</th>
-                        <th className="py-2.5 px-3">Qty</th>
-                        <th className="py-2.5 px-3">Rate</th>
-                        <th className="py-2.5 px-3">GST</th>
-                        <th className="py-2.5 px-4 text-right">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 font-mono">
-                      {(selectedInvoice.lines || []).map((l: any, i: number) => (
-                        <tr key={i}>
-                          <td className="py-2.5 px-4 font-sans text-white">{l.item?.name || "Item"}</td>
-                          <td className="py-2.5 px-3 text-cyan-300">{l.quantity} {l.item?.unit}</td>
-                          <td className="py-2.5 px-3">₹{l.rate}</td>
-                          <td className="py-2.5 px-3">{l.gst_rate}%</td>
-                          <td className="py-2.5 px-4 text-right font-bold text-slate-200">
-                            ₹{l.line_total.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            <div className="p-5 space-y-4 text-xs max-h-[75vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded border border-slate-200">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                    Vendor Supplier
+                  </span>
+                  <span className="font-bold text-slate-900 text-sm">
+                    {selectedInvoice.party?.name || "Direct Supplier"}
+                  </span>
+                  {selectedInvoice.party?.gst_number && (
+                    <div className="text-slate-500 font-mono text-[11px]">
+                      GSTIN: {selectedInvoice.party.gst_number}
+                    </div>
+                  )}
                 </div>
-
-                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex justify-between items-center text-xs">
-                  <span className="text-slate-400">Total Purchase Amount:</span>
-                  <span className="font-mono text-base font-bold text-cyan-300">
-                    ₹{selectedInvoice.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                    Bill Date
+                  </span>
+                  <span className="font-semibold text-slate-900">
+                    {selectedInvoice.invoice_date}
                   </span>
                 </div>
+              </div>
 
-                {selectedInvoice.status === "draft" && (
-                  <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
-                    <button
-                      type="button"
-                      disabled={actionLoading}
-                      onClick={() => handleCancel(selectedInvoice.id)}
-                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 text-xs font-medium transition-colors"
-                    >
-                      Cancel Invoice
-                    </button>
-                    <button
-                      type="button"
-                      disabled={actionLoading}
-                      onClick={() => handleConfirm(selectedInvoice.id)}
-                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/20"
-                    >
-                      {actionLoading ? "Confirming..." : "✓ Confirm & Receive Stock"}
-                    </button>
+              {/* Line Items */}
+              <table className="erp-table">
+                <thead>
+                  <tr>
+                    <th>Item Description</th>
+                    <th className="text-right">Qty</th>
+                    <th className="text-right">Rate</th>
+                    <th className="text-right">GST %</th>
+                    <th className="text-right">Line Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedInvoice.lines?.map((l) => (
+                    <tr key={l.id}>
+                      <td className="font-semibold text-slate-900">
+                        {l.item?.name || "Medicine Item"}
+                      </td>
+                      <td className="text-right font-mono">
+                        {l.quantity} {l.item?.unit || "pcs"}
+                      </td>
+                      <td className="text-right font-mono">₹{Number(l.rate).toFixed(2)}</td>
+                      <td className="text-right">{l.gst_rate}%</td>
+                      <td className="text-right font-bold text-slate-900">
+                        ₹{Number(l.line_total).toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Summary Totals */}
+              <div className="flex justify-end pt-3 border-t border-slate-200">
+                <div className="w-64 space-y-1 text-right text-xs">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Taxable Subtotal:</span>
+                    <span className="font-mono">
+                      ₹{(Number(selectedInvoice.total_amount) - Number(selectedInvoice.gst_amount)).toFixed(2)}
+                    </span>
                   </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span>Total GST Amount:</span>
+                    <span className="font-mono text-blue-700">
+                      ₹{Number(selectedInvoice.gst_amount).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold text-slate-900 pt-1 border-t border-slate-200">
+                    <span>Grand Total:</span>
+                    <span className="font-mono text-emerald-700">
+                      ₹{Number(selectedInvoice.total_amount).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div>
+                {selectedInvoice.status === "draft" && (
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => handleConfirmPurchase(selectedInvoice.id)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                  >
+                    Confirm & Inward to Stock
+                  </button>
                 )}
               </div>
-            )}
+              <button
+                type="button"
+                onClick={() => setShowDetailModal(false)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-600">
-        Trade Flow Invoicing Engine &bull; Phase 5 Active
-      </footer>
-    </div>
+    </AppLayout>
   );
 }

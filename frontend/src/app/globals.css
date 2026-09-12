@@ -3,18 +3,58 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
+
+/* Dense ERP table utilities */
+.erp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem; /* 13px */
+}
+
+.erp-table th {
+  background-color: #f1f5f9;
+  color: #475569;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.6875rem; /* 11px */
+  letter-spacing: 0.05em;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.erp-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #f1f5f9;
+  color: #1e293b;
+}
+
+.erp-table tr:hover td {
+  background-color: #f8fafc;
+}
+
+/* Custom scrollbars for dense data */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
