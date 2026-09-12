@@ -91,11 +91,25 @@ const PARTY_FIELDS: TargetFieldDef[] = [
     aliases: ["phone", "mobile", "contact", "phone number", "mobile no", "contact no", "telephone"],
   },
   {
+    key: "email",
+    label: "Email Address",
+    required: false,
+    description: "Business email address for invoices and ledger statements",
+    aliases: ["email", "e-mail", "mail", "email id", "email address"],
+  },
+  {
     key: "address",
     label: "Address",
     required: false,
-    description: "Premises, street, locality, city",
+    description: "Premises, street, locality",
     aliases: ["address", "street", "location", "address 1", "full address", "billing address"],
+  },
+  {
+    key: "city",
+    label: "City",
+    required: false,
+    description: "Town or city name",
+    aliases: ["city", "town", "district"],
   },
   {
     key: "state",
@@ -105,11 +119,53 @@ const PARTY_FIELDS: TargetFieldDef[] = [
     aliases: ["state", "province", "region", "state name"],
   },
   {
+    key: "pincode",
+    label: "PIN Code",
+    required: false,
+    description: "6-digit postal code",
+    aliases: ["pin", "pincode", "postal code", "zip", "zipcode"],
+  },
+  {
     key: "gst_number",
     label: "GSTIN / Tax ID",
     required: false,
     description: "15-digit GSTIN (e.g. 27AABCS1234F1Z1)",
     aliases: ["gstin", "gst number", "gst no", "gst_number", "tax id", "tin", "gst"],
+  },
+  {
+    key: "pan",
+    label: "PAN Number",
+    required: false,
+    description: "10-character Permanent Account Number",
+    aliases: ["pan", "pan no", "pan number", "income tax pan"],
+  },
+  {
+    key: "drug_license_number",
+    label: "Drug License Number",
+    required: false,
+    description: "Pharma wholesale/retail drug license number (e.g. 20B/21B)",
+    aliases: ["drug license", "drug license number", "drug license no", "dl", "dl no", "dl number", "license no", "d.l. no"],
+  },
+  {
+    key: "drug_license_expiry",
+    label: "Drug License Expiry",
+    required: false,
+    description: "Expiration date of drug license (YYYY-MM-DD)",
+    aliases: ["drug license expiry", "dl expiry", "license expiry", "dl exp", "expiry date", "valid upto", "dl validity"],
+  },
+  {
+    key: "opening_balance",
+    label: "Opening Balance",
+    required: false,
+    description: "Initial balance when onboarding party",
+    aliases: ["opening balance", "op bal", "balance", "opening amt", "ledger balance"],
+  },
+  {
+    key: "opening_balance_type",
+    label: "Balance Type (Dr/Cr)",
+    required: false,
+    description: "Dr (Receivable) or Cr (Payable)",
+    aliases: ["dr/cr", "balance type", "drcr", "dr cr", "type of balance"],
   },
 ];
 
@@ -333,10 +389,10 @@ function ImportWizardContent() {
     } else {
       filename = "sample_parties_import_template.csv";
       csvContent =
-        "Party Name,Type,Mobile,Address,State,GSTIN\n" +
-        'Apex Pharma Distributors,vendor,9876543210,Plot 45 Industrial Area,Maharashtra,27AABCA1111A1Z1\n' +
-        'Cipla Healthcare Supply,vendor,9823012345,Bandra Kurla Complex,Maharashtra,27AABCC2222B1Z2\n' +
-        'Apollo Clinic Chemist,customer,9988776655,Shop 3 Station Road,Maharashtra,27AABCA3333C1Z3\n';
+        "Party Name,Type,Mobile,Email,Address,City,State,PIN Code,GSTIN,PAN,Drug License No,Drug License Expiry,Opening Balance,Balance Type\n" +
+        'Apex Pharma Distributors,vendor,9876543210,apex@pharma.com,Plot 45 Industrial Area,Mumbai,Maharashtra,400001,27AABCA1111A1Z1,AABCA1111A,20B/21B-4567,2027-12-31,5000,cr\n' +
+        'Cipla Healthcare Supply,vendor,9823012345,sales@cipla.com,Bandra Kurla Complex,Mumbai,Maharashtra,400051,27AABCC2222B1Z2,AABCC2222B,20B/21B-8901,2026-10-15,12000,cr\n' +
+        'Apollo Clinic Chemist,customer,9988776655,care@apollo.com,Shop 3 Station Road,Pune,Maharashtra,411001,27AABCA3333C1Z3,AABCA3333C,,,0,dr\n';
     }
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });

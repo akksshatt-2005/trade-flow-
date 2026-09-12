@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { formatParty, serializePartyAddress } from "@/lib/party-utils";
 
 async function verifyAuthAndTenant(request: Request) {
   const authHeader = request.headers.get("Authorization");
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ message: "Failed to fetch parties." }, { status: 500 });
     }
 
-    return NextResponse.json({ parties: parties || [] }, { status: 200 });
+    return NextResponse.json({ parties: (parties || []).map(formatParty) }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json({ message: err.message || "Internal server error." }, { status: 500 });
   }
@@ -88,7 +89,22 @@ export async function POST(request: Request) {
 
     const { companyId } = auth;
     const body = await request.json();
-    const { name, type, phone, address, gst_number, state } = body;
+    const {
+      name,
+      type,
+      phone,
+      email,
+      address,
+      city,
+      state,
+      pincode,
+      gst_number,
+      pan,
+      drug_license_number,
+      drug_license_expiry,
+      opening_balance,
+      opening_balance_type,
+    } = body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json({ message: "Party name is required." }, { status: 400 });
@@ -111,28 +127,62 @@ export async function POST(request: Request) {
       }
     }
 
-    let finalAddress = address?.trim() || null;
-    if (state && typeof state === "string" && state.trim()) {
-      const stateTrimmed = state.trim();
-      if (!finalAddress) {
-        finalAddress = stateTrimmed;
-      } else if (!finalAddress.toLowerCase().includes(stateTrimmed.toLowerCase())) {
-        finalAddress = `${finalAddress}, ${stateTrimmed}`;
-      }
-    }
+    const finalAddress = serializePartyAddress({
+      address,
+      city,
+      state,
+      pincode,
+      email,
+      pan,
+      drug_license_number,
+      drug_license_expiry,
+      opening_balance,
+      opening_balance_type,
+    });
 
-    const { data: party, error } = await supabaseAdmin
+    const insertPayload: any = {
+      company_id: companyId,
+      name: name.trim(),
+      type,
+      phone: phone?.trim() || null,
+      address: finalAddress,
+      gst_number: gst_number?.trim() || null,
+      email: email?.trim() || null,
+      city: city?.trim() || null,
+      state: state?.trim() || null,
+      pincode: pincode?.trim() || null,
+      pan: pan?.trim()?.toUpperCase() || null,
+      drug_license_number: drug_license_number?.trim() || null,
+      drug_license_expiry: drug_license_expiry?.trim() || null,
+      opening_balance: opening_balance !== undefined ? Number(opening_balance) : 0,
+      opening_balance_type: opening_balance_type || "cr",
+    };
+
+    let { data: party, error } = await supabaseAdmin
       .from("parties")
-      .insert({
+      .insert(insertPayload)
+      .select()
+      .maybeSingle();
+
+    if (error && error.message?.includes("column")) {
+      const basicPayload = {
         company_id: companyId,
         name: name.trim(),
         type,
         phone: phone?.trim() || null,
         address: finalAddress,
         gst_number: gst_number?.trim() || null,
-      })
-      .select()
-      .single();
+      };
+
+      const retry = await supabaseAdmin
+        .from("parties")
+        .insert(basicPayload)
+        .select()
+        .single();
+
+      party = retry.data;
+      error = retry.error;
+    }
 
     if (error || !party) {
       return NextResponse.json(
@@ -141,7 +191,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ party }, { status: 201 });
+    return NextResponse.json({ party: formatParty(party) }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ message: err.message || "Internal server error." }, { status: 500 });
   }

@@ -3,6 +3,7 @@ import {
   IsString,
   IsOptional,
   IsIn,
+  IsNumber,
   Matches,
 } from 'class-validator';
 
@@ -26,7 +27,23 @@ export class CreatePartyDto {
 
   @IsOptional()
   @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  pincode?: string;
 
   @IsOptional()
   @IsString()
@@ -34,7 +51,23 @@ export class CreatePartyDto {
 
   @IsOptional()
   @IsString()
-  state?: string;
+  pan?: string;
+
+  @IsOptional()
+  @IsString()
+  drug_license_number?: string;
+
+  @IsOptional()
+  @IsString()
+  drug_license_expiry?: string;
+
+  @IsOptional()
+  @IsNumber()
+  opening_balance?: number;
+
+  @IsOptional()
+  @IsIn(['dr', 'cr'])
+  opening_balance_type?: 'dr' | 'cr';
 }
 
 export class UpdatePartyDto {
@@ -57,7 +90,23 @@ export class UpdatePartyDto {
 
   @IsOptional()
   @IsString()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  pincode?: string;
 
   @IsOptional()
   @IsString()
@@ -65,6 +114,21 @@ export class UpdatePartyDto {
 
   @IsOptional()
   @IsString()
-  state?: string;
-}
+  pan?: string;
 
+  @IsOptional()
+  @IsString()
+  drug_license_number?: string;
+
+  @IsOptional()
+  @IsString()
+  drug_license_expiry?: string;
+
+  @IsOptional()
+  @IsNumber()
+  opening_balance?: number;
+
+  @IsOptional()
+  @IsIn(['dr', 'cr'])
+  opening_balance_type?: 'dr' | 'cr';
+}

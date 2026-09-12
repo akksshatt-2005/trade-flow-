@@ -12,6 +12,7 @@ import {
   ImportCommitResult,
   SkippedRowDetail,
 } from './dto/import.dto';
+import { serializePartyAddress } from '../parties/parties.service';
 
 @Injectable()
 export class ImportService {
@@ -295,9 +296,17 @@ export class ImportService {
 
         const rawName = row[columnMapping.name];
         const rawPhone = columnMapping.phone ? row[columnMapping.phone] : '';
+        const rawEmail = columnMapping.email ? row[columnMapping.email] : '';
         const rawAddress = columnMapping.address ? row[columnMapping.address] : '';
+        const rawCity = columnMapping.city ? row[columnMapping.city] : '';
         const rawState = columnMapping.state ? row[columnMapping.state] : '';
+        const rawPincode = columnMapping.pincode ? row[columnMapping.pincode] : '';
         const rawGstin = columnMapping.gst_number ? row[columnMapping.gst_number] : '';
+        const rawPan = columnMapping.pan ? row[columnMapping.pan] : '';
+        const rawDlNumber = columnMapping.drug_license_number ? row[columnMapping.drug_license_number] : '';
+        const rawDlExpiry = columnMapping.drug_license_expiry ? row[columnMapping.drug_license_expiry] : '';
+        const rawOpeningBalance = columnMapping.opening_balance ? row[columnMapping.opening_balance] : '0';
+        const rawOpeningBalanceType = columnMapping.opening_balance_type ? row[columnMapping.opening_balance_type] : 'cr';
         const rawType = columnMapping.type ? row[columnMapping.type] : '';
 
         const name = rawName !== undefined && rawName !== null ? String(rawName).trim() : '';
@@ -325,28 +334,63 @@ export class ImportService {
         }
 
         const phone = rawPhone && String(rawPhone).trim() ? String(rawPhone).trim() : null;
-        let address = rawAddress && String(rawAddress).trim() ? String(rawAddress).trim() : null;
+        const email = rawEmail && String(rawEmail).trim() ? String(rawEmail).trim() : null;
+        const address = rawAddress && String(rawAddress).trim() ? String(rawAddress).trim() : null;
+        const city = rawCity && String(rawCity).trim() ? String(rawCity).trim() : null;
         const state = rawState && String(rawState).trim() ? String(rawState).trim() : null;
+        const pincode = rawPincode && String(rawPincode).trim() ? String(rawPincode).trim() : null;
         const gstNumber = rawGstin && String(rawGstin).trim() ? String(rawGstin).trim().toUpperCase() : null;
+        const pan = rawPan && String(rawPan).trim() ? String(rawPan).trim().toUpperCase() : null;
+        const dlNumber = rawDlNumber && String(rawDlNumber).trim() ? String(rawDlNumber).trim() : null;
+        const dlExpiry = rawDlExpiry && String(rawDlExpiry).trim() ? String(rawDlExpiry).trim() : null;
+        const openingBal = Number(String(rawOpeningBalance).replace(/[^0-9.]/g, '')) || 0;
+        const openingBalType: 'dr' | 'cr' = String(rawOpeningBalanceType).toLowerCase().includes('dr') ? 'dr' : 'cr';
 
-        if (state) {
-          if (!address) {
-            address = state;
-          } else if (!address.toLowerCase().includes(state.toLowerCase())) {
-            address = `${address}, ${state}`;
-          }
-        }
+        const finalAddress = serializePartyAddress({
+          address,
+          city,
+          state,
+          pincode,
+          email,
+          pan,
+          drug_license_number: dlNumber,
+          drug_license_expiry: dlExpiry,
+          opening_balance: openingBal,
+          opening_balance_type: openingBalType,
+        });
 
         const partyPayload: any = {
           company_id: companyId,
           name: name,
           type: partyType,
           phone: phone,
-          address: address,
+          address: finalAddress,
           gst_number: gstNumber,
+          email,
+          city,
+          state,
+          pincode,
+          pan,
+          drug_license_number: dlNumber,
+          drug_license_expiry: dlExpiry,
+          opening_balance: openingBal,
+          opening_balance_type: openingBalType,
         };
 
         let { error: insertError } = await admin.from('parties').insert(partyPayload);
+
+        if (insertError && insertError.message?.includes('column')) {
+          const basicPayload = {
+            company_id: companyId,
+            name: name,
+            type: partyType,
+            phone: phone,
+            address: finalAddress,
+            gst_number: gstNumber,
+          };
+          const retry = await admin.from('parties').insert(basicPayload);
+          insertError = retry.error;
+        }
 
         if (insertError) {
           this.logger.warn(`Failed to insert party at row ${rowNum}: ${insertError.message}`);

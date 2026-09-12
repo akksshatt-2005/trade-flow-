@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { formatParty, serializePartyAddress } from "@/lib/party-utils";
 
 async function verifyAuthAndTenant(request: Request) {
   const authHeader = request.headers.get("Authorization");
@@ -63,7 +64,7 @@ export async function GET(
       return NextResponse.json({ message: "Party not found in this company." }, { status: 404 });
     }
 
-    return NextResponse.json({ party }, { status: 200 });
+    return NextResponse.json({ party: formatParty(party) }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json({ message: err.message || "Internal server error." }, { status: 500 });
   }
@@ -84,16 +85,18 @@ export async function PATCH(
     const body = await request.json();
 
     // Verify existing party
-    const { data: currentParty, error: findError } = await supabaseAdmin
+    const { data: currentPartyRaw, error: findError } = await supabaseAdmin
       .from("parties")
       .select("*")
       .eq("company_id", companyId)
       .eq("id", id)
       .maybeSingle();
 
-    if (findError || !currentParty) {
+    if (findError || !currentPartyRaw) {
       return NextResponse.json({ message: "Party not found in this company." }, { status: 404 });
     }
+
+    const currentParty = formatParty(currentPartyRaw);
 
     // Guard: System Cash account protection
     const isSystemCash = Boolean(currentParty.is_system_account) || currentParty.name.toLowerCase() === "cash";
@@ -134,29 +137,94 @@ export async function PATCH(
       }
     }
 
+    const mergedDto = {
+      address: body.address !== undefined ? body.address : currentParty.address,
+      city: body.city !== undefined ? body.city : currentParty.city,
+      state: body.state !== undefined ? body.state : currentParty.state,
+      pincode: body.pincode !== undefined ? body.pincode : currentParty.pincode,
+      email: body.email !== undefined ? body.email : currentParty.email,
+      pan: body.pan !== undefined ? body.pan : currentParty.pan,
+      drug_license_number:
+        body.drug_license_number !== undefined
+          ? body.drug_license_number
+          : currentParty.drug_license_number,
+      drug_license_expiry:
+        body.drug_license_expiry !== undefined
+          ? body.drug_license_expiry
+          : currentParty.drug_license_expiry,
+      opening_balance:
+        body.opening_balance !== undefined ? body.opening_balance : currentParty.opening_balance,
+      opening_balance_type:
+        body.opening_balance_type !== undefined
+          ? body.opening_balance_type
+          : currentParty.opening_balance_type,
+    };
+
+    const finalAddress = serializePartyAddress(mergedDto);
+
     const updatePayload: any = {
       updated_at: new Date().toISOString(),
+      address: finalAddress,
     };
 
     if (body.name !== undefined) updatePayload.name = body.name.trim();
     if (body.type !== undefined) updatePayload.type = body.type;
     if (body.phone !== undefined) updatePayload.phone = body.phone?.trim() || null;
-    if (body.address !== undefined) updatePayload.address = body.address?.trim() || null;
     if (body.gst_number !== undefined) updatePayload.gst_number = body.gst_number?.trim() || null;
 
-    const { data: updated, error } = await supabaseAdmin
+    if (body.email !== undefined) updatePayload.email = body.email?.trim() || null;
+    if (body.city !== undefined) updatePayload.city = body.city?.trim() || null;
+    if (body.state !== undefined) updatePayload.state = body.state?.trim() || null;
+    if (body.pincode !== undefined) updatePayload.pincode = body.pincode?.trim() || null;
+    if (body.pan !== undefined) updatePayload.pan = body.pan?.trim()?.toUpperCase() || null;
+    if (body.drug_license_number !== undefined) {
+      updatePayload.drug_license_number = body.drug_license_number?.trim() || null;
+    }
+    if (body.drug_license_expiry !== undefined) {
+      updatePayload.drug_license_expiry = body.drug_license_expiry?.trim() || null;
+    }
+    if (body.opening_balance !== undefined) {
+      updatePayload.opening_balance = Number(body.opening_balance);
+    }
+    if (body.opening_balance_type !== undefined) {
+      updatePayload.opening_balance_type = body.opening_balance_type;
+    }
+
+    let { data: updated, error } = await supabaseAdmin
       .from("parties")
       .update(updatePayload)
       .eq("company_id", companyId)
       .eq("id", id)
       .select()
-      .single();
+      .maybeSingle();
+
+    if (error && error.message?.includes("column")) {
+      const basicPayload: any = {
+        updated_at: new Date().toISOString(),
+        address: finalAddress,
+      };
+      if (body.name !== undefined) basicPayload.name = body.name.trim();
+      if (body.type !== undefined) basicPayload.type = body.type;
+      if (body.phone !== undefined) basicPayload.phone = body.phone?.trim() || null;
+      if (body.gst_number !== undefined) basicPayload.gst_number = body.gst_number?.trim() || null;
+
+      const retry = await supabaseAdmin
+        .from("parties")
+        .update(basicPayload)
+        .eq("company_id", companyId)
+        .eq("id", id)
+        .select()
+        .single();
+
+      updated = retry.data;
+      error = retry.error;
+    }
 
     if (error || !updated) {
       return NextResponse.json({ message: "Failed to update party." }, { status: 500 });
     }
 
-    return NextResponse.json({ party: updated }, { status: 200 });
+    return NextResponse.json({ party: formatParty(updated) }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json({ message: err.message || "Internal server error." }, { status: 500 });
   }
@@ -188,18 +256,37 @@ export async function DELETE(
 
     if (party.is_system_account || party.name.toLowerCase() === "cash") {
       return NextResponse.json(
-        { message: "Cannot delete system Cash account." },
+        { message: "Cannot delete the system Cash account." },
         { status: 400 },
       );
     }
 
-    const { error: delError } = await supabaseAdmin
+    const { count: salesCount } = await supabaseAdmin
+      .from("sales_invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .eq("party_id", id);
+
+    const { count: purchaseCount } = await supabaseAdmin
+      .from("purchase_invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .eq("party_id", id);
+
+    if ((salesCount || 0) > 0 || (purchaseCount || 0) > 0) {
+      return NextResponse.json(
+        { message: "Cannot delete party with existing invoice history." },
+        { status: 400 },
+      );
+    }
+
+    const { error: deleteError } = await supabaseAdmin
       .from("parties")
       .delete()
       .eq("company_id", companyId)
       .eq("id", id);
 
-    if (delError) {
+    if (deleteError) {
       return NextResponse.json({ message: "Failed to delete party." }, { status: 500 });
     }
 
