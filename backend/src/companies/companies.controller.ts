@@ -2,13 +2,15 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Param,
   Body,
   UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { CompaniesService, CompanyWithRole } from './companies.service';
-import { CreateCompanyDto } from './dto/create-company.dto';
+import { CreateCompanyDto, UpdateCashOpeningBalanceDto } from './dto/create-company.dto';
 import { SupabaseAuthGuard, AuthenticatedUser } from '../auth/guards/supabase-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CompanyScopeGuard } from './guards/company-scope.guard';
@@ -52,5 +54,36 @@ export class CompaniesController {
     @CurrentCompany() companyContext: any,
   ) {
     return { context: companyContext };
+  }
+
+  /**
+   * Updates the cash opening balance for the currently scoped company.
+   */
+  @Patch('current/cash-opening-balance')
+  @UseGuards(CompanyScopeGuard)
+  async updateCurrentCashOpeningBalance(
+    @CurrentCompany() companyContext: any,
+    @Body() dto: UpdateCashOpeningBalanceDto,
+  ) {
+    const result = await this.companiesService.updateCashOpeningBalance(
+      companyContext.company_id,
+      dto.cash_opening_balance,
+    );
+    return result;
+  }
+
+  /**
+   * Updates the cash opening balance for a specific company by ID.
+   */
+  @Patch(':id/cash-opening-balance')
+  async updateCashOpeningBalanceById(
+    @Param('id') companyId: string,
+    @Body() dto: UpdateCashOpeningBalanceDto,
+  ) {
+    const result = await this.companiesService.updateCashOpeningBalance(
+      companyId,
+      dto.cash_opening_balance,
+    );
+    return result;
   }
 }

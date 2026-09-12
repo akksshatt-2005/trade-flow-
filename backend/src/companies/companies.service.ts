@@ -2,6 +2,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -78,6 +79,7 @@ export interface CompanyWithRole {
   gst_number?: string | null;
   address?: string | null;
   state?: string | null;
+  cash_opening_balance: number;
   role: 'owner' | 'accountant' | 'salesperson';
   created_at: string;
 }
@@ -87,6 +89,44 @@ export class CompaniesService {
   private readonly logger = new Logger(CompaniesService.name);
 
   constructor(private readonly supabaseService: SupabaseService) {}
+
+  /**
+   * Helper: Ensures a default system Cash account exists for the given company.
+   */
+  async ensureSystemCashAccount(companyId: string): Promise<string> {
+    const admin = this.supabaseService.getAdminClient();
+
+    // Check if Cash party exists
+    const { data: existingCash } = await admin
+      .from('parties')
+      .select('id')
+      .eq('company_id', companyId)
+      .or('is_system_account.eq.true,name.ilike.Cash')
+      .maybeSingle();
+
+    if (existingCash) {
+      return existingCash.id;
+    }
+
+    // Create system Cash party
+    const { data: newCash, error } = await admin
+      .from('parties')
+      .insert({
+        company_id: companyId,
+        name: 'Cash',
+        type: 'both',
+        is_system_account: true,
+      })
+      .select('id')
+      .single();
+
+    if (error || !newCash) {
+      this.logger.error(`Failed to auto-create system Cash party: ${error?.message}`);
+      throw new InternalServerErrorException('Failed to initialize Cash account.');
+    }
+
+    return newCash.id;
+  }
 
   /**
    * Retrieves all companies associated with a specific user via user_companies.
@@ -104,6 +144,7 @@ export class CompaniesService {
           name,
           gst_number,
           address,
+          cash_opening_balance,
           created_at
         )
       `)
@@ -126,6 +167,7 @@ export class CompaniesService {
         gst_number: row.companies.gst_number,
         address: row.companies.address,
         state: resolveState(row.companies),
+        cash_opening_balance: Number(row.companies.cash_opening_balance || 0),
         role: row.role,
         created_at: row.companies.created_at,
       }));
@@ -133,6 +175,7 @@ export class CompaniesService {
 
   /**
    * Creates a new company tenant and links the creator as 'owner' in user_companies.
+   * Also automatically initializes a system-reserved "Cash" party.
    */
   async create(userId: string, dto: CreateCompanyDto): Promise<CompanyWithRole> {
     const admin = this.supabaseService.getAdminClient();
@@ -148,6 +191,8 @@ export class CompaniesService {
       }
     }
 
+    const initialCashBalance = Number(dto.cash_opening_balance || 0);
+
     // 1. Create company record
     const { data: company, error: companyError } = await admin
       .from('companies')
@@ -155,6 +200,7 @@ export class CompaniesService {
         name: dto.name.trim(),
         gst_number: dto.gst_number?.trim() || null,
         address: finalAddress,
+        cash_opening_balance: initialCashBalance,
       })
       .select()
       .single();
@@ -175,7 +221,6 @@ export class CompaniesService {
       this.logger.error(
         `Failed to link user to company in user_companies: ${linkError.message}`,
       );
-      // Cleanup orphan company record
       try {
         await admin.from('companies').delete().eq('id', company.id);
       } catch {
@@ -186,14 +231,83 @@ export class CompaniesService {
       );
     }
 
+    // 3. Auto-create system-reserved "Cash" party
+    try {
+      await this.ensureSystemCashAccount(company.id);
+    } catch (err: any) {
+      this.logger.warn(`Warning: Failed to auto-create Cash party for company ${company.id}: ${err.message}`);
+    }
+
     return {
       id: company.id,
       name: company.name,
       gst_number: company.gst_number,
       address: company.address,
       state: dto.state || resolveState(company),
+      cash_opening_balance: Number(company.cash_opening_balance || 0),
       role: 'owner',
       created_at: company.created_at,
+    };
+  }
+
+  /**
+   * Sets or updates cash opening balance for a company.
+   * Rejects if any confirmed cash transactions already exist.
+   */
+  async updateCashOpeningBalance(
+    companyId: string,
+    cashOpeningBalance: number,
+  ): Promise<{ company_id: string; cash_opening_balance: number }> {
+    const admin = this.supabaseService.getAdminClient();
+
+    if (cashOpeningBalance < 0 || isNaN(cashOpeningBalance)) {
+      throw new BadRequestException('Cash opening balance must be a non-negative number.');
+    }
+
+    // 1. Find the Cash party ID
+    const cashPartyId = await this.ensureSystemCashAccount(companyId);
+
+    // 2. Check for confirmed cash sales invoices
+    const { count: salesCount } = await admin
+      .from('sales_invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .eq('party_id', cashPartyId)
+      .eq('status', 'confirmed');
+
+    // 3. Check for confirmed cash purchase invoices
+    const { count: purchaseCount } = await admin
+      .from('purchase_invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .eq('party_id', cashPartyId)
+      .eq('status', 'confirmed');
+
+    const totalCashTx = (salesCount || 0) + (purchaseCount || 0);
+
+    if (totalCashTx > 0) {
+      throw new BadRequestException(
+        `Cannot update cash opening balance after ${totalCashTx} confirmed cash transaction(s) have been recorded.`,
+      );
+    }
+
+    // 4. Update company cash_opening_balance
+    const { error: updateError } = await admin
+      .from('companies')
+      .update({
+        cash_opening_balance: Math.round(cashOpeningBalance * 100) / 100,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', companyId);
+
+    if (updateError) {
+      this.logger.error(`Failed to update cash opening balance: ${updateError.message}`);
+      throw new InternalServerErrorException('Failed to update cash opening balance.');
+    }
+
+    return {
+      company_id: companyId,
+      cash_opening_balance: Math.round(cashOpeningBalance * 100) / 100,
     };
   }
 
@@ -214,7 +328,8 @@ export class CompaniesService {
           id,
           name,
           gst_number,
-          address
+          address,
+          cash_opening_balance
         )
       `)
       .eq('user_id', userId)

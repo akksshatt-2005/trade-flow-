@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, IsOptional, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, MaxLength, IsNumber, Min } from 'class-validator';
 
 export class CreateCompanyDto {
   @IsNotEmpty({ message: 'Company name is required' })
@@ -18,5 +18,16 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsString()
   state?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Cash opening balance must be a non-negative number' })
+  cash_opening_balance?: number;
 }
 
+export class UpdateCashOpeningBalanceDto {
+  @IsNotEmpty({ message: 'cash_opening_balance is required' })
+  @IsNumber()
+  @Min(0, { message: 'Cash opening balance must be a non-negative number' })
+  cash_opening_balance: number;
+}

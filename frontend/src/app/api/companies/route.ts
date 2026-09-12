@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
     const userId = authData.user.id;
     const body = await request.json();
-    const { name, gst_number, address, state } = body;
+    const { name, gst_number, address, state, cash_opening_balance } = body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json(
@@ -29,6 +29,8 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+
+    const initialCash = Number(cash_opening_balance || 0);
 
     // 1. Create company
     const { data: company, error: companyError } = await supabaseAdmin
@@ -38,6 +40,7 @@ export async function POST(request: Request) {
         gst_number: gst_number?.trim() || null,
         address: address?.trim() || null,
         state: state?.trim() || null,
+        cash_opening_balance: initialCash,
       })
       .select()
       .single();
@@ -66,6 +69,14 @@ export async function POST(request: Request) {
       );
     }
 
+    // 3. Auto-create system Cash party
+    await supabaseAdmin.from("parties").insert({
+      company_id: company.id,
+      name: "Cash",
+      type: "both",
+      is_system_account: true,
+    }).catch(() => null);
+
     return NextResponse.json(
       {
         company: {
@@ -74,6 +85,7 @@ export async function POST(request: Request) {
           gst_number: company.gst_number,
           address: company.address,
           state: company.state,
+          cash_opening_balance: Number(company.cash_opening_balance || 0),
           role: "owner",
           created_at: company.created_at,
         },

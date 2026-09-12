@@ -14,6 +14,7 @@ export interface Party {
   address?: string | null;
   state?: string | null;
   gst_number?: string | null;
+  is_system_account?: boolean;
   created_at: string;
 }
 
@@ -334,50 +335,60 @@ export default function PartiesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredParties.map((party) => (
-                    <tr key={party.id}>
-                      <td className="font-bold text-slate-900 max-w-xs truncate">
-                        {party.name}
-                      </td>
-                      <td>
-                        <span
-                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            party.type === "customer"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : party.type === "vendor"
-                              ? "bg-blue-50 text-blue-700 border border-blue-200"
-                              : "bg-purple-50 text-purple-700 border border-purple-200"
-                          }`}
-                        >
-                          {party.type}
-                        </span>
-                      </td>
-                      <td className="font-mono text-slate-700">{party.phone || "—"}</td>
-                      <td className="text-slate-800 font-medium capitalize">
-                        {party.state || "Maharashtra"}
-                      </td>
-                      <td className="font-mono text-slate-500">{party.gst_number || "—"}</td>
-                      <td className="text-slate-500 max-w-xs truncate">
-                        {party.address || "—"}
-                      </td>
-                      <td className="text-right whitespace-nowrap space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => handleViewSummary(party)}
-                          className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-                        >
-                          Summary
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(party)}
-                          className="text-xs font-semibold text-slate-500 hover:text-slate-800 hover:underline cursor-pointer"
-                        >
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredParties.map((party) => {
+                    const isSystem = Boolean(party.is_system_account) || party.name.toLowerCase() === "cash";
+                    return (
+                      <tr key={party.id}>
+                        <td className="font-bold text-slate-900 max-w-xs truncate flex items-center gap-2">
+                          <span>{party.name}</span>
+                          {isSystem && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-300 text-slate-700 text-[10px] font-bold uppercase tracking-wider">
+                              System Cash
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              party.type === "customer"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : party.type === "vendor"
+                                ? "bg-blue-50 text-blue-700 border border-blue-200"
+                                : "bg-purple-50 text-purple-700 border border-purple-200"
+                            }`}
+                          >
+                            {party.type}
+                          </span>
+                        </td>
+                        <td className="font-mono text-slate-700">{party.phone || "—"}</td>
+                        <td className="text-slate-800 font-medium capitalize">
+                          {party.state || "Maharashtra"}
+                        </td>
+                        <td className="font-mono text-slate-500">{party.gst_number || "—"}</td>
+                        <td className="text-slate-500 max-w-xs truncate">
+                          {party.address || "—"}
+                        </td>
+                        <td className="text-right whitespace-nowrap space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => handleViewSummary(party)}
+                            className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                          >
+                            Summary
+                          </button>
+                          {!isSystem && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEdit(party)}
+                              className="text-xs font-semibold text-slate-500 hover:text-slate-800 hover:underline cursor-pointer"
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

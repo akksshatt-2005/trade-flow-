@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { resolveState } from "@/lib/stateUtils";
 
 async function verifyAuthAndTenant(request: Request) {
   const authHeader = request.headers.get("Authorization");
@@ -37,41 +38,6 @@ async function verifyAuthAndTenant(request: Request) {
   }
 
   return { userId, companyId, role: membership.role };
-}
-
-const GST_STATE_CODES: Record<string, string> = {
-  '01': 'jammu and kashmir', '02': 'himachal pradesh', '03': 'punjab', '04': 'chandigarh',
-  '05': 'uttarakhand', '06': 'haryana', '07': 'delhi', '08': 'rajasthan', '09': 'uttar pradesh',
-  '10': 'bihar', '11': 'sikkim', '12': 'arunachal pradesh', '13': 'nagaland', '14': 'manipur',
-  '15': 'mizoram', '16': 'tripura', '17': 'meghalaya', '18': 'assam', '19': 'west bengal',
-  '20': 'jharkhand', '21': 'odisha', '22': 'chhattisgarh', '23': 'madhya pradesh', '24': 'gujarat',
-  '27': 'maharashtra', '29': 'karnataka', '30': 'goa', '32': 'kerala', '33': 'tamil nadu',
-  '36': 'telangana', '37': 'andhra pradesh',
-};
-
-const KNOWN_STATES = [
-  'andhra pradesh', 'arunachal pradesh', 'assam', 'bihar', 'chhattisgarh', 'goa', 'gujarat',
-  'haryana', 'himachal pradesh', 'jharkhand', 'karnataka', 'kerala', 'madhya pradesh',
-  'maharashtra', 'manipur', 'meghalaya', 'mizoram', 'nagaland', 'odisha', 'punjab',
-  'rajasthan', 'sikkim', 'tamil nadu', 'telangana', 'tripura', 'uttar pradesh', 'uttarakhand',
-  'west bengal', 'delhi', 'chandigarh', 'jammu & kashmir', 'ladakh', 'puducherry',
-];
-
-function resolveState(entity?: { gst_number?: string | null; address?: string | null; state?: string | null } | null): string {
-  if (!entity) return '';
-  if (entity.state && entity.state.trim()) return entity.state.trim().toLowerCase();
-  if (entity.gst_number && entity.gst_number.trim().length >= 2) {
-    const code = entity.gst_number.trim().substring(0, 2);
-    if (GST_STATE_CODES[code]) return GST_STATE_CODES[code];
-  }
-  if (entity.address && entity.address.trim()) {
-    const addrLower = entity.address.trim().toLowerCase();
-    for (const st of KNOWN_STATES) {
-      if (addrLower.includes(st)) return st;
-    }
-    return addrLower;
-  }
-  return '';
 }
 
 export async function GET(request: Request) {
@@ -131,6 +97,9 @@ export async function GET(request: Request) {
         igst_amount: igst,
         gst_amount: totalGst,
         total_amount: totalAmount,
+        walkin_name: inv.walkin_name || null,
+        walkin_phone: inv.walkin_phone || null,
+        walkin_address: inv.walkin_address || null,
         is_interstate: isInterstate,
         status: inv.status,
         created_at: inv.created_at,
@@ -153,7 +122,7 @@ export async function POST(request: Request) {
 
     const { companyId } = auth;
     const body = await request.json();
-    const { party_id, invoice_number, invoice_date, lines } = body;
+    const { party_id, invoice_number, invoice_date, lines, walkin_name, walkin_phone, walkin_address } = body;
 
     if (!party_id || !invoice_number || !Array.isArray(lines) || lines.length === 0) {
       return NextResponse.json(
@@ -162,10 +131,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify customer party
+    // Verify customer party (customer, both, or system Cash account)
     const { data: party, error: partyError } = await supabaseAdmin
       .from("parties")
-      .select("id, name, type, address, gst_number")
+      .select("id, name, type, address, gst_number, is_system_account")
       .eq("company_id", companyId)
       .eq("id", party_id)
       .maybeSingle();
@@ -174,7 +143,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Selected customer not found." }, { status: 400 });
     }
 
-    if (party.type !== "customer" && party.type !== "both") {
+    const isSystemCash = Boolean(party.is_system_account) || party.name.toLowerCase() === "cash";
+    if (party.type !== "customer" && party.type !== "both" && !isSystemCash) {
       return NextResponse.json(
         { message: `Selected party '${party.name}' has type '${party.type}'. Sales invoices can only be created for customers.` },
         { status: 400 },
@@ -254,6 +224,9 @@ export async function POST(request: Request) {
         invoice_date: invoice_date || new Date().toISOString().split("T")[0],
         total_amount: Math.round(totalAmount * 100) / 100,
         gst_amount: Math.round(totalGst * 100) / 100,
+        walkin_name: walkin_name?.trim() || null,
+        walkin_phone: walkin_phone?.trim() || null,
+        walkin_address: walkin_address?.trim() || null,
         status: "draft",
       })
       .select()

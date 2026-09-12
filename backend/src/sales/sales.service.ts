@@ -38,6 +38,9 @@ export interface SalesInvoice {
   igst_amount: number;
   gst_amount: number;
   total_amount: number;
+  walkin_name?: string | null;
+  walkin_phone?: string | null;
+  walkin_address?: string | null;
   is_interstate: boolean;
   status: 'draft' | 'confirmed' | 'cancelled';
   lines?: SalesInvoiceLine[];
@@ -73,10 +76,10 @@ export class SalesService {
   async create(companyId: string, dto: CreateSalesDto): Promise<SalesInvoice> {
     const admin = this.supabaseService.getAdminClient();
 
-    // 1. Verify customer party exists
+    // 1. Verify customer party exists (customer, both, or system Cash account)
     const { data: party, error: partyError } = await admin
       .from('parties')
-      .select('id, name, type, address, gst_number')
+      .select('id, name, type, address, gst_number, is_system_account')
       .eq('company_id', companyId)
       .eq('id', dto.party_id)
       .maybeSingle();
@@ -85,7 +88,8 @@ export class SalesService {
       throw new BadRequestException('Selected customer does not exist in this company.');
     }
 
-    if (party.type !== 'customer' && party.type !== 'both') {
+    const isSystemCash = Boolean(party.is_system_account) || party.name.toLowerCase() === 'cash';
+    if (party.type !== 'customer' && party.type !== 'both' && !isSystemCash) {
       throw new BadRequestException(
         `Selected party '${party.name}' has type '${party.type}'. Sales invoices can only be created for customers.`,
       );
@@ -174,6 +178,9 @@ export class SalesService {
         invoice_date: invoiceDate,
         total_amount: Math.round(totalAmount * 100) / 100,
         gst_amount: Math.round(totalGst * 100) / 100,
+        walkin_name: dto.walkin_name?.trim() || null,
+        walkin_phone: dto.walkin_phone?.trim() || null,
+        walkin_address: dto.walkin_address?.trim() || null,
         status: 'draft',
       })
       .select()
@@ -215,27 +222,50 @@ export class SalesService {
    * If ANY item is short, rejects with 400 and writes ZERO ledger entries.
    */
   async confirm(companyId: string, invoiceId: string): Promise<SalesInvoice> {
-    const invoice = await this.findOne(companyId, invoiceId);
-
-    if (invoice.status !== 'draft') {
-      throw new BadRequestException(
-        `Only draft sales invoices can be confirmed. Current status is '${invoice.status}'.`,
-      );
-    }
-
     const admin = this.supabaseService.getAdminClient();
 
-    // 1. Group required quantities by item_id
-    const requiredByItem = new Map<string, { item_id: string; quantity: number }>();
-    for (const line of invoice.lines || []) {
-      if (!requiredByItem.has(line.item_id)) {
-        requiredByItem.set(line.item_id, { item_id: line.item_id, quantity: 0 });
-      }
-      requiredByItem.get(line.item_id)!.quantity += line.quantity;
+    const invoice = await this.findOne(companyId, invoiceId);
+
+    if (invoice.status === 'confirmed') {
+      throw new BadRequestException('Sales invoice is already confirmed.');
     }
 
-    // 2. Atomic Stock Verification across all items
-    const shortages: Array<{
+    if (invoice.status === 'cancelled') {
+      throw new BadRequestException('Cannot confirm a cancelled sales invoice.');
+    }
+
+    if (!invoice.lines || invoice.lines.length === 0) {
+      throw new BadRequestException('Cannot confirm sales invoice without line items.');
+    }
+
+    // 1. Group required quantities by item_id
+    const requiredByItem: Record<string, number> = {};
+    for (const line of invoice.lines) {
+      requiredByItem[line.item_id] = (requiredByItem[line.item_id] || 0) + line.quantity;
+    }
+
+    const itemIds = Object.keys(requiredByItem);
+
+    // 2. Fetch all movements for these items to calculate current stock atomically
+    const { data: movements, error: movError } = await admin
+      .from('stock_ledger')
+      .select('item_id, movement_type, quantity')
+      .eq('company_id', companyId)
+      .in('item_id', itemIds);
+
+    if (movError) {
+      this.logger.error(`Error querying stock ledger for confirmation: ${movError.message}`);
+      throw new InternalServerErrorException('Failed to verify inventory levels.');
+    }
+
+    const movementsByItem: Record<string, { movement_type: string; quantity: any }[]> = {};
+    for (const mov of movements || []) {
+      if (!movementsByItem[mov.item_id]) movementsByItem[mov.item_id] = [];
+      movementsByItem[mov.item_id].push(mov);
+    }
+
+    // 3. Check for stock shortages across all lines
+    const shortages: {
       item_id: string;
       item_name: string;
       sku?: string | null;
@@ -243,42 +273,32 @@ export class SalesService {
       available_stock: number;
       required_quantity: number;
       shortage: number;
-    }> = [];
+    }[] = [];
 
-    for (const [itemId, req] of requiredByItem.entries()) {
-      // Query item metadata
-      const { data: item } = await admin
-        .from('items')
-        .select('id, name, sku, unit')
-        .eq('company_id', companyId)
-        .eq('id', itemId)
-        .single();
+    for (const line of invoice.lines) {
+      const itemId = line.item_id;
+      const currentStock = this.calculateItemStock(movementsByItem[itemId] || []);
+      const requiredQty = requiredByItem[itemId];
 
-      // Query stock ledger movements for this item
-      const { data: movements } = await admin
-        .from('stock_ledger')
-        .select('movement_type, quantity')
-        .eq('company_id', companyId)
-        .eq('item_id', itemId);
-
-      const availableStock = this.calculateItemStock(movements || []);
-
-      if (availableStock < req.quantity) {
-        shortages.push({
-          item_id: itemId,
-          item_name: item?.name || 'Unknown Item',
-          sku: item?.sku,
-          unit: item?.unit || 'pcs',
-          available_stock: availableStock,
-          required_quantity: req.quantity,
-          shortage: Math.round((req.quantity - availableStock) * 100) / 100,
-        });
+      if (currentStock < requiredQty) {
+        // Prevent duplicate shortage item reports if repeated in lines
+        if (!shortages.some((s) => s.item_id === itemId)) {
+          shortages.push({
+            item_id: itemId,
+            item_name: line.item?.name || 'Unknown Item',
+            sku: line.item?.sku,
+            unit: line.item?.unit || 'pcs',
+            available_stock: currentStock,
+            required_quantity: requiredQty,
+            shortage: Math.round((requiredQty - currentStock) * 100) / 100,
+          });
+        }
       }
     }
 
-    // 3. If shortages exist: Atomic rejection with zero ledger writes
+    // 4. ATOMIC GUARD: If any shortage exists, reject with 400 and write 0 ledger entries
     if (shortages.length > 0) {
-      const shortageDetails = shortages
+      const detailStr = shortages
         .map(
           (s) =>
             `'${s.item_name}' (Available: ${s.available_stock} ${s.unit}, Required: ${s.required_quantity} ${s.unit}, Shortage: ${s.shortage} ${s.unit})`,
@@ -288,37 +308,31 @@ export class SalesService {
       throw new BadRequestException({
         statusCode: 400,
         error: 'Bad Request',
-        message: `Cannot confirm sales invoice due to insufficient stock for ${shortages.length} item(s): ${shortageDetails}`,
+        message: `Cannot confirm sales invoice due to insufficient stock for ${shortages.length} item(s): ${detailStr}`,
         shortages,
       });
     }
 
-    // 4. All stock checks passed! Write sale_out entries to stock_ledger
-    const ledgerEntries = (invoice.lines || []).map((line) => ({
+    // 5. Stock is sufficient: Write sale_out entries to stock_ledger
+    const ledgerEntries = invoice.lines.map((l) => ({
       company_id: companyId,
-      item_id: line.item_id,
+      item_id: l.item_id,
       movement_type: 'sale_out',
-      quantity: line.quantity,
+      quantity: l.quantity,
       reference_type: 'sales_invoice',
       reference_id: invoice.id,
     }));
 
-    if (ledgerEntries.length > 0) {
-      const { error: ledgerError } = await admin
-        .from('stock_ledger')
-        .insert(ledgerEntries);
+    const { error: ledgerInsertError } = await admin
+      .from('stock_ledger')
+      .insert(ledgerEntries);
 
-      if (ledgerError) {
-        this.logger.error(
-          `Failed to record stock deduction on sales confirmation: ${ledgerError.message}`,
-        );
-        throw new InternalServerErrorException(
-          'Failed to record outward stock movement in ledger.',
-        );
-      }
+    if (ledgerInsertError) {
+      this.logger.error(`Failed to record stock deductions: ${ledgerInsertError.message}`);
+      throw new InternalServerErrorException('Failed to record inventory sales movement.');
     }
 
-    // 5. Update status to 'confirmed'
+    // 6. Transition invoice status to 'confirmed'
     const { error: updateError } = await admin
       .from('sales_invoices')
       .update({
@@ -326,28 +340,34 @@ export class SalesService {
         updated_at: new Date().toISOString(),
       })
       .eq('company_id', companyId)
-      .eq('id', invoiceId);
+      .eq('id', invoice.id);
 
     if (updateError) {
-      throw new InternalServerErrorException('Failed to finalize invoice confirmation.');
+      this.logger.error(`Failed to update sales invoice status: ${updateError.message}`);
+      throw new InternalServerErrorException('Failed to complete invoice confirmation.');
     }
 
     return this.findOne(companyId, invoiceId);
   }
 
   /**
-   * Cancels a draft sales invoice.
+   * Cancels a draft sales invoice. Confirmed invoices cannot be cancelled.
    */
   async cancel(companyId: string, invoiceId: string): Promise<SalesInvoice> {
+    const admin = this.supabaseService.getAdminClient();
+
     const invoice = await this.findOne(companyId, invoiceId);
 
-    if (invoice.status !== 'draft') {
+    if (invoice.status === 'confirmed') {
       throw new BadRequestException(
-        `Cannot cancel a '${invoice.status}' sales invoice. Only draft invoices can be cancelled.`,
+        "Cannot cancel a 'confirmed' sales invoice. Only draft invoices can be cancelled.",
       );
     }
 
-    const admin = this.supabaseService.getAdminClient();
+    if (invoice.status === 'cancelled') {
+      return invoice;
+    }
+
     const { error } = await admin
       .from('sales_invoices')
       .update({
@@ -358,6 +378,7 @@ export class SalesService {
       .eq('id', invoiceId);
 
     if (error) {
+      this.logger.error(`Failed to cancel sales invoice: ${error.message}`);
       throw new InternalServerErrorException('Failed to cancel sales invoice.');
     }
 
@@ -365,10 +386,19 @@ export class SalesService {
   }
 
   /**
-   * Lists all sales invoices with GST calculations.
+   * Lists all sales invoices with tax breakdown.
    */
   async findAll(companyId: string): Promise<SalesInvoice[]> {
     const admin = this.supabaseService.getAdminClient();
+
+    // Fetch company state
+    const { data: company } = await admin
+      .from('companies')
+      .select('address, gst_number')
+      .eq('id', companyId)
+      .maybeSingle();
+
+    const compState = resolveState(company);
 
     const { data: invoices, error } = await admin
       .from('sales_invoices')
@@ -384,18 +414,10 @@ export class SalesService {
       throw new InternalServerErrorException('Failed to fetch sales invoices.');
     }
 
-    // Fetch company state
-    const { data: company } = await admin
-      .from('companies')
-      .select('address, gst_number')
-      .eq('id', companyId)
-      .maybeSingle();
-
-    const compState = resolveState(company);
-
     return (invoices || []).map((inv: any) => {
       const partyState = resolveState(inv.parties);
       const isInterstate = Boolean(compState && partyState && compState !== partyState);
+
       const totalGst = Number(inv.gst_amount) || 0;
       const totalAmount = Number(inv.total_amount) || 0;
       const totalTaxable = Math.round((totalAmount - totalGst) * 100) / 100;
@@ -420,6 +442,9 @@ export class SalesService {
         igst_amount: igst,
         gst_amount: totalGst,
         total_amount: totalAmount,
+        walkin_name: inv.walkin_name || null,
+        walkin_phone: inv.walkin_phone || null,
+        walkin_address: inv.walkin_address || null,
         is_interstate: isInterstate,
         status: inv.status,
         created_at: inv.created_at,
@@ -519,6 +544,9 @@ export class SalesService {
       igst_amount: igst,
       gst_amount: totalGst,
       total_amount: totalAmount,
+      walkin_name: inv.walkin_name || null,
+      walkin_phone: inv.walkin_phone || null,
+      walkin_address: inv.walkin_address || null,
       is_interstate: isInterstate,
       status: inv.status,
       lines: formattedLines,

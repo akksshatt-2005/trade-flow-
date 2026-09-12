@@ -17,7 +17,9 @@ export interface SalesInvoice {
   sgst_amount: number;
   igst_amount: number;
   gst_amount: number;
-  total_amount: number;
+  walkin_name?: string | null;
+  walkin_phone?: string | null;
+  walkin_address?: string | null;
   is_interstate: boolean;
   status: "draft" | "confirmed" | "cancelled";
   lines?: any[];
@@ -46,6 +48,9 @@ export default function SalesPage() {
   const [invoiceDate, setInvoiceDate] = useState(
     new Date().toISOString().split("T")[0],
   );
+  const [walkinName, setWalkinName] = useState("");
+  const [walkinPhone, setWalkinPhone] = useState("");
+  const [walkinAddress, setWalkinAddress] = useState("");
   const [lines, setLines] = useState<
     Array<{ item_id: string; quantity: string; rate: string; gst_rate: string }>
   >([{ item_id: "", quantity: "1", rate: "120", gst_rate: "12" }]);
@@ -96,6 +101,9 @@ export default function SalesPage() {
   const handleOpenAdd = () => {
     setInvoiceNumber(`INV-${Date.now().toString().slice(-6)}`);
     setCustomerId(customers[0]?.id || "");
+    setWalkinName("");
+    setWalkinPhone("");
+    setWalkinAddress("");
     setLines([{ item_id: items[0]?.id || "", quantity: "1", rate: "100", gst_rate: String(items[0]?.gst_rate || 12) }]);
     setFormError(null);
     setShortageErrors([]);
@@ -165,6 +173,9 @@ export default function SalesPage() {
         party_id: customerId,
         invoice_number: invoiceNumber.trim(),
         invoice_date: invoiceDate,
+        walkin_name: walkinName.trim() || undefined,
+        walkin_phone: walkinPhone.trim() || undefined,
+        walkin_address: walkinAddress.trim() || undefined,
         lines: lines.map((l) => ({
           item_id: l.item_id,
           quantity: Number(l.quantity),
@@ -319,7 +330,9 @@ export default function SalesPage() {
                       <td className="text-slate-600 whitespace-nowrap">{inv.invoice_date}</td>
                       <td className="font-mono font-bold text-slate-900">{inv.invoice_number}</td>
                       <td className="font-medium text-slate-900 max-w-xs truncate">
-                        {inv.party?.name || "Cash Customer"}
+                        {inv.walkin_name
+                          ? `${inv.party?.name || "Cash"} (${inv.walkin_name})`
+                          : inv.party?.name || "Cash Customer"}
                       </td>
                       <td>
                         <span className="text-[11px] text-slate-600">
@@ -422,7 +435,7 @@ export default function SalesPage() {
                     {customers.length === 0 && <option value="">No customers available</option>}
                     {customers.map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.name} {c.phone ? `(${c.phone})` : ""}
+                        {c.name} {c.is_system_account ? "(Cash Account)" : c.phone ? `(${c.phone})` : ""}
                       </option>
                     ))}
                   </select>
@@ -454,6 +467,56 @@ export default function SalesPage() {
                   />
                 </div>
               </div>
+
+              {/* Walk-in Buyer Details Section (Optional) */}
+              {(selectedCust?.name?.toLowerCase() === "cash" || selectedCust?.is_system_account) && (
+                <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-md space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                    <svg className="w-3.5 h-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <span>Walk-in Buyer Details (Optional)</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                        Buyer Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Ramesh Sharma"
+                        value={walkinName}
+                        onChange={(e) => setWalkinName(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-blue-500 outline-none text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                        Phone Number
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 9876543210"
+                        value={walkinPhone}
+                        onChange={(e) => setWalkinPhone(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-blue-500 outline-none text-slate-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                        Address / Location
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Shivaji Nagar, Pune"
+                        value={walkinAddress}
+                        onChange={(e) => setWalkinAddress(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-blue-500 outline-none text-slate-900"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* GST Tax Preview Banner */}
               <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded text-xs flex items-center justify-between">
@@ -632,6 +695,17 @@ export default function SalesPage() {
                   <span className="font-bold text-slate-900 text-sm">
                     {selectedInvoice.party?.name || "Cash Customer"}
                   </span>
+                  {selectedInvoice.walkin_name && (
+                    <div className="text-blue-700 font-semibold text-xs mt-0.5">
+                      Walk-in Buyer: {selectedInvoice.walkin_name}
+                      {selectedInvoice.walkin_phone && ` (${selectedInvoice.walkin_phone})`}
+                    </div>
+                  )}
+                  {selectedInvoice.walkin_address && (
+                    <div className="text-slate-500 text-[11px]">
+                      {selectedInvoice.walkin_address}
+                    </div>
+                  )}
                   {selectedInvoice.party?.gst_number && (
                     <div className="text-slate-500 font-mono text-[11px]">
                       GSTIN: {selectedInvoice.party.gst_number}

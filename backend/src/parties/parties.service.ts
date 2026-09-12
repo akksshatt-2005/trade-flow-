@@ -18,6 +18,7 @@ export interface Party {
   address?: string | null;
   state?: string | null;
   gst_number?: string | null;
+  is_system_account?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -62,6 +63,7 @@ export class PartiesService {
         phone: dto.phone?.trim() || null,
         address: finalAddress,
         gst_number: dto.gst_number?.trim() || null,
+        is_system_account: false,
       })
       .select()
       .single();
@@ -75,6 +77,7 @@ export class PartiesService {
 
     return {
       ...party,
+      is_system_account: Boolean(party.is_system_account),
       state: dto.state || resolveState(party),
     };
   }
@@ -111,6 +114,7 @@ export class PartiesService {
 
     return (parties || []).map((p) => ({
       ...p,
+      is_system_account: Boolean(p.is_system_account),
       state: resolveState(p),
     }));
   }
@@ -134,6 +138,7 @@ export class PartiesService {
 
     return {
       ...party,
+      is_system_account: Boolean(party.is_system_account),
       state: resolveState(party),
     };
   }
@@ -141,6 +146,7 @@ export class PartiesService {
   /**
    * Updates party details.
    * Blocks type-change if invoices exist for this party.
+   * Blocks modification of name, type, or system status on system Cash accounts.
    */
   async update(
     companyId: string,
@@ -150,7 +156,17 @@ export class PartiesService {
     const currentParty = await this.findOne(companyId, partyId);
     const admin = this.supabaseService.getAdminClient();
 
-    // Guard: Check if type change is attempted
+    // Guard: System Cash account immutability
+    if (currentParty.is_system_account || currentParty.name.toLowerCase() === 'cash') {
+      if (dto.name && dto.name.trim().toLowerCase() !== currentParty.name.toLowerCase()) {
+        throw new BadRequestException('Cannot change the name of the system Cash account.');
+      }
+      if (dto.type && dto.type !== currentParty.type) {
+        throw new BadRequestException('Cannot change the party type of the system Cash account.');
+      }
+    }
+
+    // Guard: Check if type change is attempted when invoices exist
     if (dto.type && dto.type !== currentParty.type) {
       const { count: salesCount } = await admin
         .from('sales_invoices')
@@ -194,7 +210,51 @@ export class PartiesService {
       throw new InternalServerErrorException('Failed to update party details.');
     }
 
-    return updated;
+    return {
+      ...updated,
+      is_system_account: Boolean(updated.is_system_account),
+      state: resolveState(updated),
+    };
+  }
+
+  /**
+   * Deletes a party if not a system account and no linked invoices exist.
+   */
+  async delete(companyId: string, partyId: string): Promise<{ success: boolean; message: string }> {
+    const party = await this.findOne(companyId, partyId);
+    if (party.is_system_account || party.name.toLowerCase() === 'cash') {
+      throw new BadRequestException('Cannot delete system Cash account.');
+    }
+
+    const admin = this.supabaseService.getAdminClient();
+
+    const { count: salesCount } = await admin
+      .from('sales_invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .eq('party_id', partyId);
+
+    const { count: purchaseCount } = await admin
+      .from('purchase_invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .eq('party_id', partyId);
+
+    if ((salesCount || 0) > 0 || (purchaseCount || 0) > 0) {
+      throw new BadRequestException('Cannot delete party with existing invoice history.');
+    }
+
+    const { error } = await admin
+      .from('parties')
+      .delete()
+      .eq('company_id', companyId)
+      .eq('id', partyId);
+
+    if (error) {
+      throw new InternalServerErrorException('Failed to delete party.');
+    }
+
+    return { success: true, message: 'Party deleted successfully.' };
   }
 
   /**

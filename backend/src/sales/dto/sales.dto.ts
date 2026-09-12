@@ -49,6 +49,18 @@ export class CreateSalesDto {
   @IsString()
   invoice_date?: string;
 
+  @IsOptional()
+  @IsString()
+  walkin_name?: string;
+
+  @IsOptional()
+  @IsString()
+  walkin_phone?: string;
+
+  @IsOptional()
+  @IsString()
+  walkin_address?: string;
+
   @IsArray({ message: 'Lines must be an array of items' })
   @ArrayMinSize(1, { message: 'Sales invoice must have at least one line item' })
   @ValidateNested({ each: true })

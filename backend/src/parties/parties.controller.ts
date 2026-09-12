@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -59,7 +60,7 @@ export class PartiesController {
   }
 
   /**
-   * Updates party details. Blocks type change if invoices exist.
+   * Updates party details. Blocks type change if invoices exist and protects system Cash account.
    */
   @Patch(':id')
   async update(
@@ -69,6 +70,17 @@ export class PartiesController {
   ): Promise<{ party: Party }> {
     const party = await this.partiesService.update(companyId, id, dto);
     return { party };
+  }
+
+  /**
+   * Deletes a party if not a system account and no linked invoices exist.
+   */
+  @Delete(':id')
+  async delete(
+    @CurrentCompany('id') companyId: string,
+    @Param('id') id: string,
+  ): Promise<{ success: boolean; message: string }> {
+    return await this.partiesService.delete(companyId, id);
   }
 
   /**

@@ -29,6 +29,9 @@ export interface PurchaseInvoice {
   invoice_date: string;
   total_amount: number;
   gst_amount: number;
+  walkin_name?: string | null;
+  walkin_phone?: string | null;
+  walkin_address?: string | null;
   status: 'draft' | 'confirmed' | 'cancelled';
   lines?: PurchaseInvoiceLine[];
   created_at: string;
@@ -47,10 +50,10 @@ export class PurchasesService {
   async create(companyId: string, dto: CreatePurchaseDto): Promise<PurchaseInvoice> {
     const admin = this.supabaseService.getAdminClient();
 
-    // 1. Verify party exists and is vendor or both
+    // 1. Verify party exists and is vendor, both, or system Cash account
     const { data: party, error: partyError } = await admin
       .from('parties')
-      .select('id, name, type')
+      .select('id, name, type, is_system_account')
       .eq('company_id', companyId)
       .eq('id', dto.party_id)
       .maybeSingle();
@@ -59,7 +62,8 @@ export class PurchasesService {
       throw new BadRequestException('Selected vendor does not exist in this company.');
     }
 
-    if (party.type !== 'vendor' && party.type !== 'both') {
+    const isSystemCash = Boolean(party.is_system_account) || party.name.toLowerCase() === 'cash';
+    if (party.type !== 'vendor' && party.type !== 'both' && !isSystemCash) {
       throw new BadRequestException(
         `Selected party '${party.name}' has type '${party.type}'. Purchase invoices can only be created for vendors.`,
       );
@@ -133,6 +137,9 @@ export class PurchasesService {
         invoice_date: invoiceDate,
         total_amount: Math.round(totalAmount * 100) / 100,
         gst_amount: Math.round(totalGst * 100) / 100,
+        walkin_name: dto.walkin_name?.trim() || null,
+        walkin_phone: dto.walkin_phone?.trim() || null,
+        walkin_address: dto.walkin_address?.trim() || null,
         status: 'draft',
       })
       .select()
@@ -158,10 +165,9 @@ export class PurchasesService {
       line_total: l.line_total,
     }));
 
-    const { data: linesData, error: linesError } = await admin
+    const { error: linesError } = await admin
       .from('purchase_invoice_lines')
-      .insert(linesToInsert)
-      .select();
+      .insert(linesToInsert);
 
     if (linesError) {
       this.logger.error(`Failed to insert purchase lines: ${linesError.message}`);
@@ -174,42 +180,42 @@ export class PurchasesService {
    * Confirms a draft purchase invoice and writes purchase_in entries to stock_ledger.
    */
   async confirm(companyId: string, invoiceId: string): Promise<PurchaseInvoice> {
-    const invoice = await this.findOne(companyId, invoiceId);
-
-    if (invoice.status !== 'draft') {
-      throw new BadRequestException(
-        `Only draft purchase invoices can be confirmed. Current status is '${invoice.status}'.`,
-      );
-    }
-
     const admin = this.supabaseService.getAdminClient();
 
-    // 1. Write stock_ledger entries for each line
-    const ledgerEntries = (invoice.lines || []).map((line) => ({
+    const invoice = await this.findOne(companyId, invoiceId);
+
+    if (invoice.status === 'confirmed') {
+      throw new BadRequestException('Purchase invoice is already confirmed.');
+    }
+
+    if (invoice.status === 'cancelled') {
+      throw new BadRequestException('Cannot confirm a cancelled purchase invoice.');
+    }
+
+    if (!invoice.lines || invoice.lines.length === 0) {
+      throw new BadRequestException('Cannot confirm purchase invoice without line items.');
+    }
+
+    // 1. Write purchase_in entries to stock_ledger
+    const ledgerEntries = invoice.lines.map((l) => ({
       company_id: companyId,
-      item_id: line.item_id,
+      item_id: l.item_id,
       movement_type: 'purchase_in',
-      quantity: line.quantity,
+      quantity: l.quantity,
       reference_type: 'purchase_invoice',
       reference_id: invoice.id,
     }));
 
-    if (ledgerEntries.length > 0) {
-      const { error: ledgerError } = await admin
-        .from('stock_ledger')
-        .insert(ledgerEntries);
+    const { error: ledgerError } = await admin
+      .from('stock_ledger')
+      .insert(ledgerEntries);
 
-      if (ledgerError) {
-        this.logger.error(
-          `Failed to record stock movements on purchase confirmation: ${ledgerError.message}`,
-        );
-        throw new InternalServerErrorException(
-          'Failed to record inward stock in ledger.',
-        );
-      }
+    if (ledgerError) {
+      this.logger.error(`Failed to write purchase stock movements: ${ledgerError.message}`);
+      throw new InternalServerErrorException('Failed to record stock inward movements.');
     }
 
-    // 2. Update status to 'confirmed'
+    // 2. Transition invoice status to 'confirmed'
     const { error: updateError } = await admin
       .from('purchase_invoices')
       .update({
@@ -217,10 +223,11 @@ export class PurchasesService {
         updated_at: new Date().toISOString(),
       })
       .eq('company_id', companyId)
-      .eq('id', invoiceId);
+      .eq('id', invoice.id);
 
     if (updateError) {
-      throw new InternalServerErrorException('Failed to finalize invoice confirmation.');
+      this.logger.error(`Failed to update purchase invoice status: ${updateError.message}`);
+      throw new InternalServerErrorException('Failed to update invoice confirmation status.');
     }
 
     return this.findOne(companyId, invoiceId);
@@ -230,15 +237,20 @@ export class PurchasesService {
    * Cancels a draft purchase invoice. Confirmed invoices cannot be cancelled.
    */
   async cancel(companyId: string, invoiceId: string): Promise<PurchaseInvoice> {
+    const admin = this.supabaseService.getAdminClient();
+
     const invoice = await this.findOne(companyId, invoiceId);
 
-    if (invoice.status !== 'draft') {
+    if (invoice.status === 'confirmed') {
       throw new BadRequestException(
-        `Cannot cancel a '${invoice.status}' purchase invoice. Only draft invoices can be cancelled.`,
+        "Cannot cancel a 'confirmed' purchase invoice. Only draft invoices can be cancelled.",
       );
     }
 
-    const admin = this.supabaseService.getAdminClient();
+    if (invoice.status === 'cancelled') {
+      return invoice;
+    }
+
     const { error } = await admin
       .from('purchase_invoices')
       .update({
@@ -249,6 +261,7 @@ export class PurchasesService {
       .eq('id', invoiceId);
 
     if (error) {
+      this.logger.error(`Failed to cancel purchase invoice: ${error.message}`);
       throw new InternalServerErrorException('Failed to cancel purchase invoice.');
     }
 
@@ -256,7 +269,7 @@ export class PurchasesService {
   }
 
   /**
-   * Lists all purchase invoices for a company.
+   * Lists all purchase invoices for the company.
    */
   async findAll(companyId: string): Promise<PurchaseInvoice[]> {
     const admin = this.supabaseService.getAdminClient();
@@ -284,6 +297,9 @@ export class PurchasesService {
       invoice_date: inv.invoice_date,
       total_amount: Number(inv.total_amount),
       gst_amount: Number(inv.gst_amount),
+      walkin_name: inv.walkin_name || null,
+      walkin_phone: inv.walkin_phone || null,
+      walkin_address: inv.walkin_address || null,
       status: inv.status,
       created_at: inv.created_at,
       updated_at: inv.updated_at,
@@ -330,6 +346,9 @@ export class PurchasesService {
       invoice_date: inv.invoice_date,
       total_amount: Number(inv.total_amount),
       gst_amount: Number(inv.gst_amount),
+      walkin_name: inv.walkin_name || null,
+      walkin_phone: inv.walkin_phone || null,
+      walkin_address: inv.walkin_address || null,
       status: inv.status,
       lines: (lines || []).map((l: any) => ({
         id: l.id,

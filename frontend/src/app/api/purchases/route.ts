@@ -58,24 +58,10 @@ export async function GET(request: Request) {
       .order("created_at", { ascending: false });
 
     if (error) {
-      return NextResponse.json({ message: "Failed to fetch purchases." }, { status: 500 });
+      return NextResponse.json({ message: "Failed to fetch purchase invoices." }, { status: 500 });
     }
 
-    const formatted = (invoices || []).map((inv: any) => ({
-      id: inv.id,
-      company_id: inv.company_id,
-      party_id: inv.party_id,
-      party: inv.parties,
-      invoice_number: inv.invoice_number,
-      invoice_date: inv.invoice_date,
-      total_amount: Number(inv.total_amount),
-      gst_amount: Number(inv.gst_amount),
-      status: inv.status,
-      created_at: inv.created_at,
-      updated_at: inv.updated_at,
-    }));
-
-    return NextResponse.json({ invoices: formatted }, { status: 200 });
+    return NextResponse.json({ invoices: invoices || [] }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json({ message: err.message || "Internal server error." }, { status: 500 });
   }
@@ -90,7 +76,7 @@ export async function POST(request: Request) {
 
     const { companyId } = auth;
     const body = await request.json();
-    const { party_id, invoice_number, invoice_date, lines } = body;
+    const { party_id, invoice_number, invoice_date, lines, walkin_name, walkin_phone, walkin_address } = body;
 
     if (!party_id || !invoice_number || !Array.isArray(lines) || lines.length === 0) {
       return NextResponse.json(
@@ -99,10 +85,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify vendor party
+    // Verify vendor party (vendor, both, or system Cash account)
     const { data: party, error: partyError } = await supabaseAdmin
       .from("parties")
-      .select("id, name, type")
+      .select("id, name, type, is_system_account")
       .eq("company_id", companyId)
       .eq("id", party_id)
       .maybeSingle();
@@ -111,7 +97,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Selected vendor not found." }, { status: 400 });
     }
 
-    if (party.type !== "vendor" && party.type !== "both") {
+    const isSystemCash = Boolean(party.is_system_account) || party.name.toLowerCase() === "cash";
+    if (party.type !== "vendor" && party.type !== "both" && !isSystemCash) {
       return NextResponse.json(
         { message: `Selected party '${party.name}' is not a vendor.` },
         { status: 400 },
@@ -181,6 +168,9 @@ export async function POST(request: Request) {
         invoice_date: invoice_date || new Date().toISOString().split("T")[0],
         total_amount: Math.round(totalAmount * 100) / 100,
         gst_amount: Math.round(totalGst * 100) / 100,
+        walkin_name: walkin_name?.trim() || null,
+        walkin_phone: walkin_phone?.trim() || null,
+        walkin_address: walkin_address?.trim() || null,
         status: "draft",
       })
       .select()

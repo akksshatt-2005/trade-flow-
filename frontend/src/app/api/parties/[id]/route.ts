@@ -95,6 +95,23 @@ export async function PATCH(
       return NextResponse.json({ message: "Party not found in this company." }, { status: 404 });
     }
 
+    // Guard: System Cash account protection
+    const isSystemCash = Boolean(currentParty.is_system_account) || currentParty.name.toLowerCase() === "cash";
+    if (isSystemCash) {
+      if (body.name && body.name.trim().toLowerCase() !== currentParty.name.toLowerCase()) {
+        return NextResponse.json(
+          { message: "Cannot change the name of the system Cash account." },
+          { status: 400 },
+        );
+      }
+      if (body.type && body.type !== currentParty.type) {
+        return NextResponse.json(
+          { message: "Cannot change the party type of the system Cash account." },
+          { status: 400 },
+        );
+      }
+    }
+
     // Check if type change is attempted and invoices exist
     if (body.type && body.type !== currentParty.type) {
       const { count: salesCount } = await supabaseAdmin
@@ -140,6 +157,53 @@ export async function PATCH(
     }
 
     return NextResponse.json({ party: updated }, { status: 200 });
+  } catch (err: any) {
+    return NextResponse.json({ message: err.message || "Internal server error." }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const auth = await verifyAuthAndTenant(request);
+    if ("error" in auth) {
+      return NextResponse.json({ message: auth.error }, { status: auth.status });
+    }
+
+    const { companyId } = auth;
+    const { id } = await params;
+
+    const { data: party, error: findError } = await supabaseAdmin
+      .from("parties")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("id", id)
+      .maybeSingle();
+
+    if (findError || !party) {
+      return NextResponse.json({ message: "Party not found in this company." }, { status: 404 });
+    }
+
+    if (party.is_system_account || party.name.toLowerCase() === "cash") {
+      return NextResponse.json(
+        { message: "Cannot delete system Cash account." },
+        { status: 400 },
+      );
+    }
+
+    const { error: delError } = await supabaseAdmin
+      .from("parties")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("id", id);
+
+    if (delError) {
+      return NextResponse.json({ message: "Failed to delete party." }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, message: "Party deleted successfully." }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json({ message: err.message || "Internal server error." }, { status: 500 });
   }
