@@ -11,6 +11,7 @@ import { PartiesModule } from './parties/parties.module';
 import { PurchasesModule } from './purchases/purchases.module';
 import { SalesModule } from './sales/sales.module';
 import { ReportsModule } from './reports/reports.module';
+import { ImportModule } from './import/import.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ReportsModule } from './reports/reports.module';
     PurchasesModule,
     SalesModule,
     ReportsModule,
+    ImportModule,
     HealthModule,
   ],
   controllers: [AppController],

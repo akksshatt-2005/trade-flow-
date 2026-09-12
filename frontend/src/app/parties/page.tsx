@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
 import AppLayout from "../../components/AppLayout";
 
@@ -225,15 +226,26 @@ export default function PartiesPage() {
       pageTitle="Parties Directory"
       pageSubtitle={`Customers and Vendor suppliers for ${activeCompany?.name || "your shop"}`}
       headerActions={
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-          </svg>
-          <span>+ Add Customer / Vendor</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/import?type=parties"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            <span>Bulk Import (.xlsx / .csv)</span>
+          </Link>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+            </svg>
+            <span>+ Add Customer / Vendor</span>
+          </button>
+        </div>
       }
     >
       <div className="space-y-4 max-w-7xl mx-auto">

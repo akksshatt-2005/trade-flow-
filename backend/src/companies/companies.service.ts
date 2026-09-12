@@ -101,7 +101,7 @@ export class CompaniesService {
       .from('parties')
       .select('id')
       .eq('company_id', companyId)
-      .or('is_system_account.eq.true,name.ilike.Cash')
+      .ilike('name', 'Cash')
       .maybeSingle();
 
     if (existingCash) {
@@ -115,7 +115,6 @@ export class CompaniesService {
         company_id: companyId,
         name: 'Cash',
         type: 'both',
-        is_system_account: true,
       })
       .select('id')
       .single();
@@ -139,14 +138,7 @@ export class CompaniesService {
       .select(`
         role,
         created_at,
-        companies:company_id (
-          id,
-          name,
-          gst_number,
-          address,
-          cash_opening_balance,
-          created_at
-        )
+        companies:company_id (*)
       `)
       .eq('user_id', userId);
 
@@ -193,17 +185,29 @@ export class CompaniesService {
 
     const initialCashBalance = Number(dto.cash_opening_balance || 0);
 
-    // 1. Create company record
-    const { data: company, error: companyError } = await admin
+    const insertPayload: any = {
+      name: dto.name.trim(),
+      gst_number: dto.gst_number?.trim() || null,
+      address: finalAddress,
+      cash_opening_balance: initialCashBalance,
+    };
+
+    let { data: company, error: companyError } = await admin
       .from('companies')
-      .insert({
-        name: dto.name.trim(),
-        gst_number: dto.gst_number?.trim() || null,
-        address: finalAddress,
-        cash_opening_balance: initialCashBalance,
-      })
+      .insert(insertPayload)
       .select()
-      .single();
+      .maybeSingle();
+
+    if (companyError?.message?.includes('cash_opening_balance')) {
+      delete insertPayload.cash_opening_balance;
+      const retry = await admin
+        .from('companies')
+        .insert(insertPayload)
+        .select()
+        .single();
+      company = retry.data;
+      companyError = retry.error;
+    }
 
     if (companyError || !company) {
       this.logger.error(`Failed to insert company: ${companyError?.message}`);
@@ -324,13 +328,7 @@ export class CompaniesService {
       .from('user_companies')
       .select(`
         role,
-        companies:company_id (
-          id,
-          name,
-          gst_number,
-          address,
-          cash_opening_balance
-        )
+        companies:company_id (*)
       `)
       .eq('user_id', userId)
       .eq('company_id', companyId)

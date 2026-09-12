@@ -54,17 +54,18 @@ export class PartiesService {
       }
     }
 
+    const insertPayload: any = {
+      company_id: companyId,
+      name: dto.name.trim(),
+      type: dto.type,
+      phone: dto.phone?.trim() || null,
+      address: finalAddress,
+      gst_number: dto.gst_number?.trim() || null,
+    };
+
     const { data: party, error } = await admin
       .from('parties')
-      .insert({
-        company_id: companyId,
-        name: dto.name.trim(),
-        type: dto.type,
-        phone: dto.phone?.trim() || null,
-        address: finalAddress,
-        gst_number: dto.gst_number?.trim() || null,
-        is_system_account: false,
-      })
+      .insert(insertPayload)
       .select()
       .single();
 
